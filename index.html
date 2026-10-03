@@ -1,0 +1,2761 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>背包乱斗 构筑推荐器 · Backpack Battles Build Helper</title>
+<meta name="description" content="背包乱斗（Backpack Battles）非官方构筑推荐工具：选择职业、勾选本局已买到的装备，实时推荐最匹配的流派与还缺的核心装备。">
+<!--
+  ============================================================
+  背包乱斗 构筑推荐器（Backpack Battles Build Helper）
+  ------------------------------------------------------------
+  · 单文件网页：HTML + 内联 CSS + 内联 JS，无任何外部依赖
+  · 数据来源：Backpack Battles 中文 Wiki（backpackbattles.wiki.gg/zh）
+    版本号：1.1.9b（2026-09-18）
+  · 非官方工具，与游戏开发商、Wiki 官方均无关联
+  · 功能：职业/流派匹配评分 · 装备合成检测 · 升级路线展开 · 按回合阶段（前/中/后期）的商店推荐
+  · 想更新版本数据：只需修改下方 GAME_META / BUILDS / RECIPES 常量
+  ============================================================
+-->
+<style>
+/* ============================================================
+   1. 设计变量（深色游戏风 + 金色点缀）
+   ============================================================ */
+:root{
+  --bg-0:#0a0b10;          /* 最深背景 */
+  --bg-1:#12141d;          /* 页面背景 */
+  --bg-2:#191c27;          /* 卡片背景 */
+  --bg-3:#222635;          /* 悬浮/格子背景 */
+  --line:#2c3145;          /* 描边 */
+  --line-soft:#232838;     /* 浅描边 */
+  --gold:#e8b64c;          /* 主金色 */
+  --gold-bright:#ffd77a;   /* 亮金 */
+  --gold-dim:#7a6027;      /* 暗金 */
+  --txt:#e8eaf2;           /* 主文字 */
+  --txt-dim:#9ba3bb;       /* 次要文字 */
+  --txt-mute:#666e88;      /* 更弱文字 */
+  --ok:#57d38c;            /* 匹配/成功 */
+  --warn:#e8734c;          /* 提示 */
+  --purple:#a06cf0;
+  --cyan:#4cc7d8;
+  --radius:14px;
+  --shadow:0 10px 30px rgba(0,0,0,.5);
+  --font:"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+}
+
+/* ============================================================
+   2. 基础重置
+   ============================================================ */
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{
+  font-family:var(--font);
+  color:var(--txt);
+  line-height:1.65;
+  /* 背包格纹理：细网格 + 径向光晕 */
+  background-color:var(--bg-1);
+  background-image:
+    radial-gradient(900px 500px at 12% -8%, rgba(232,182,76,.10), transparent 60%),
+    radial-gradient(800px 460px at 92% 4%, rgba(160,108,240,.10), transparent 62%),
+    linear-gradient(rgba(255,255,255,.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.022) 1px, transparent 1px);
+  background-size:auto,auto,34px 34px,34px 34px;
+  background-attachment:fixed;
+  overflow-x:hidden;
+}
+img{max-width:100%;display:block}
+button{font-family:inherit;cursor:pointer;border:0;background:none;color:inherit}
+input{font-family:inherit}
+::selection{background:rgba(232,182,76,.3);color:#fff}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:var(--bg-0)}
+::-webkit-scrollbar-thumb{background:#333a52;border-radius:6px}
+::-webkit-scrollbar-thumb:hover{background:#475071}
+
+/* 通用容器 */
+.wrap{width:min(1180px,92vw);margin:0 auto}
+
+/* ============================================================
+   3. 顶部导航栏
+   ============================================================ */
+.nav{
+  position:fixed;inset:0 0 auto 0;z-index:80;
+  background:rgba(10,11,16,.72);
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--line-soft);
+}
+.nav-in{display:flex;align-items:center;justify-content:space-between;gap:14px;height:62px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.5px;white-space:nowrap}
+.brand .icon{
+  width:30px;height:30px;flex:0 0 30px;display:grid;place-items:center;font-size:16px;
+  border-radius:8px;border:1px solid var(--gold-dim);
+  background:linear-gradient(150deg,#2a2413,#14161f);
+  box-shadow:inset 0 0 12px rgba(232,182,76,.2);
+}
+.brand small{display:block;font-size:10px;font-weight:500;color:var(--txt-mute);letter-spacing:1.4px}
+.nav-links{display:flex;gap:4px}
+.nav-links a{
+  color:var(--txt-dim);text-decoration:none;font-size:13.5px;padding:8px 13px;border-radius:9px;
+  transition:color .2s,background .2s;white-space:nowrap;
+}
+.nav-links a:hover{color:var(--gold-bright);background:rgba(232,182,76,.09)}
+.nav-meta{display:flex;align-items:center;gap:8px}
+.ver-pill{
+  display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:700;
+  padding:5px 11px;border-radius:999px;color:var(--gold-bright);
+  border:1px solid var(--gold-dim);background:rgba(232,182,76,.10);white-space:nowrap;
+}
+.ver-pill .dot{width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok)}
+/* 版本旁的「含装备合成检测」说明 */
+.synth-pill{
+  display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;
+  padding:5px 10px;border-radius:999px;color:#9fe6f0;white-space:nowrap;
+  border:1px solid rgba(76,199,216,.35);background:rgba(76,199,216,.09);
+}
+.burger{
+  display:none;width:40px;height:38px;border:1px solid var(--line);border-radius:10px;
+  background:var(--bg-2);position:relative;
+}
+.burger span{position:absolute;left:10px;width:18px;height:2px;background:var(--txt);border-radius:2px;transition:.25s}
+.burger span:nth-child(1){top:13px}
+.burger span:nth-child(2){top:18px}
+.burger span:nth-child(3){top:23px}
+.burger.on span:nth-child(1){transform:translateY(5px) rotate(45deg)}
+.burger.on span:nth-child(2){opacity:0}
+.burger.on span:nth-child(3){transform:translateY(-5px) rotate(-45deg)}
+
+/* ============================================================
+   4. Hero 首屏
+   ============================================================ */
+.hero{position:relative;padding:132px 0 64px;text-align:center;overflow:hidden}
+.hero::after{ /* 底部渐隐，衔接内容区 */
+  content:"";position:absolute;inset:auto 0 0 0;height:120px;pointer-events:none;
+  background:linear-gradient(transparent,var(--bg-1));
+}
+.tagline{
+  display:inline-flex;align-items:center;gap:9px;font-size:12.5px;color:var(--txt-dim);
+  padding:6px 15px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.03);
+  margin-bottom:22px;
+}
+.tagline b{color:var(--gold-bright)}
+h1.hero-title{
+  font-size:clamp(32px,5.6vw,62px);line-height:1.12;font-weight:900;letter-spacing:-.5px;
+  background:linear-gradient(96deg,#fff 8%,var(--gold-bright) 46%,#e79a4b 74%,#fff 100%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  filter:drop-shadow(0 4px 24px rgba(232,182,76,.22));
+}
+.hero-sub{max-width:660px;margin:20px auto 0;color:var(--txt-dim);font-size:15.5px}
+.hero-sub code{
+  color:var(--gold-bright);background:rgba(232,182,76,.1);padding:1px 6px;border-radius:5px;
+  font-size:13px;border:1px solid var(--gold-dim);
+}
+.hero-btns{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-top:32px}
+.btn{
+  display:inline-flex;align-items:center;gap:9px;font-size:14.5px;font-weight:700;
+  padding:12px 26px;border-radius:11px;transition:transform .18s,box-shadow .2s,background .2s;
+  text-decoration:none;
+}
+.btn-gold{
+  color:#231a05;background:linear-gradient(160deg,var(--gold-bright),var(--gold));
+  box-shadow:0 8px 24px rgba(232,182,76,.28);
+}
+.btn-gold:hover{transform:translateY(-2px);box-shadow:0 12px 30px rgba(232,182,76,.4)}
+.btn-ghost{color:var(--txt);border:1px solid var(--line);background:rgba(255,255,255,.03)}
+.btn-ghost:hover{border-color:var(--gold-dim);color:var(--gold-bright);transform:translateY(-2px)}
+.hero-stats{
+  display:flex;gap:34px;justify-content:center;flex-wrap:wrap;margin-top:44px;
+  padding-top:30px;border-top:1px solid var(--line-soft);
+}
+.hero-stats .st{min-width:96px}
+.hero-stats .st b{display:block;font-size:26px;font-weight:900;color:var(--gold-bright)}
+.hero-stats .st span{font-size:12.5px;color:var(--txt-mute)}
+
+/* ============================================================
+   5. 区块标题
+   ============================================================ */
+.sec{padding:66px 0;position:relative}
+.sec-head{margin-bottom:30px}
+.sec-kicker{
+  font-size:11.5px;font-weight:800;letter-spacing:2.4px;color:var(--gold);text-transform:uppercase;
+  display:flex;align-items:center;gap:10px;margin-bottom:10px;
+}
+.sec-kicker::before{content:"";width:22px;height:2px;background:var(--gold);border-radius:2px}
+.sec-head h2{font-size:clamp(22px,3.2vw,32px);font-weight:850;letter-spacing:-.3px}
+.sec-head p{color:var(--txt-dim);font-size:14.5px;margin-top:9px;max-width:760px}
+
+/* ============================================================
+   6. 职业选择区
+   ============================================================ */
+.class-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.class-card{
+  position:relative;text-align:left;padding:18px 16px 16px;border-radius:var(--radius);
+  border:1px solid var(--line);background:linear-gradient(165deg,var(--bg-2),var(--bg-1));
+  transition:transform .2s,border-color .2s,box-shadow .25s;overflow:hidden;
+}
+.class-card::before{ /* 顶部职业色条 */
+  content:"";position:absolute;inset:0 0 auto 0;height:3px;background:var(--c);
+  opacity:.5;transition:opacity .25s;
+}
+.class-card::after{ /* 悬停光晕 */
+  content:"";position:absolute;inset:-40% -40% auto auto;width:150px;height:150px;border-radius:50%;
+  background:radial-gradient(circle,rgba(232,182,76,.22),transparent 68%);
+  opacity:0;transition:opacity .3s;pointer-events:none;
+}
+.class-card:hover{transform:translateY(-4px);border-color:#3b4260;box-shadow:var(--shadow)}
+.class-card:hover::after{opacity:1}
+.class-card.on{
+  border-color:var(--gold);background:linear-gradient(165deg,#241f10,var(--bg-1));
+  box-shadow:0 0 0 1px rgba(232,182,76,.35),0 12px 32px rgba(232,182,76,.14);
+}
+.class-card.on::before{opacity:1}
+.class-card.on::after{opacity:1}
+.cc-top{display:flex;align-items:center;gap:11px;margin-bottom:9px}
+.cc-emoji{
+  width:40px;height:40px;flex:0 0 40px;display:grid;place-items:center;font-size:21px;
+  border-radius:11px;border:1px solid var(--line);background:var(--bg-3);
+}
+.class-card.on .cc-emoji{border-color:var(--gold-dim);background:#2a2413}
+.cc-name{font-size:15.5px;font-weight:800}
+.cc-en{font-size:11px;color:var(--txt-mute);letter-spacing:.6px}
+.cc-desc{font-size:12.5px;color:var(--txt-dim);min-height:38px}
+.cc-tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.cc-tag{
+  font-size:10.5px;padding:2.5px 8px;border-radius:999px;color:var(--txt-dim);
+  border:1px solid var(--line);background:rgba(255,255,255,.03);
+}
+.class-card.on .cc-tag{border-color:var(--gold-dim);color:var(--gold-bright)}
+
+/* ============================================================
+   7. 商店输入 + 流派推荐 主面板
+   ============================================================ */
+.board{
+  display:grid;grid-template-columns:minmax(0,1.02fr) minmax(0,1fr);gap:20px;align-items:start;
+}
+.panel{
+  border:1px solid var(--line);border-radius:var(--radius);background:var(--bg-2);
+  box-shadow:var(--shadow);overflow:hidden;
+}
+.panel-head{
+  padding:15px 18px;border-bottom:1px solid var(--line-soft);
+  display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  background:linear-gradient(180deg,rgba(255,255,255,.03),transparent);
+}
+.panel-head h3{font-size:15px;font-weight:800;display:flex;align-items:center;gap:9px}
+.panel-head h3 .k{
+  width:22px;height:22px;display:grid;place-items:center;font-size:11px;font-weight:900;
+  border-radius:6px;color:#231a05;background:linear-gradient(160deg,var(--gold-bright),var(--gold));
+}
+.panel-body{padding:16px 18px}
+
+/* 已选装备区 */
+.picked{
+  min-height:52px;display:flex;flex-wrap:wrap;gap:7px;padding:11px;border-radius:11px;
+  border:1px dashed var(--line);background:var(--bg-0);
+}
+.picked .empty{color:var(--txt-mute);font-size:12.5px;padding:3px 4px}
+.chip{
+  display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;
+  padding:4px 10px;border-radius:999px;border:1px solid var(--gold-dim);
+  background:rgba(232,182,76,.12);color:var(--gold-bright);transition:.15s;
+}
+.chip .x{color:var(--txt-mute);font-size:14px;line-height:1}
+.chip:hover{background:rgba(232,182,76,.22)}
+.chip:hover .x{color:#fff}
+.chip.hit{/* 该装备在当前最高分流派中是核心件 */
+  border-color:var(--ok);background:rgba(87,211,140,.12);color:#a8f0c8;
+}
+
+/* 搜索 + 自由文本 */
+.field-row{display:flex;gap:9px;margin-top:13px}
+.inp{
+  flex:1;min-width:0;padding:11px 13px;border-radius:10px;font-size:13.5px;
+  color:var(--txt);background:var(--bg-0);border:1px solid var(--line);transition:border-color .2s;
+}
+.inp::placeholder{color:var(--txt-mute)}
+.inp:focus{outline:none;border-color:var(--gold-dim);box-shadow:0 0 0 3px rgba(232,182,76,.1)}
+.btn-sm{
+  padding:11px 17px;border-radius:10px;font-size:13.5px;font-weight:700;
+  color:#231a05;background:linear-gradient(160deg,var(--gold-bright),var(--gold));white-space:nowrap;
+}
+.btn-sm:hover{filter:brightness(1.08)}
+.btn-mini{
+  padding:7px 12px;font-size:12px;border-radius:8px;color:var(--txt-dim);
+  border:1px solid var(--line);background:rgba(255,255,255,.03);
+}
+.btn-mini:hover{color:var(--gold-bright);border-color:var(--gold-dim)}
+
+/* 快捷勾选列表：背包格质感 */
+.pool{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(116px,1fr));gap:8px;
+  max-height:340px;overflow-y:auto;padding:2px;margin-top:6px;
+}
+.pool-item{
+  display:flex;align-items:center;gap:8px;text-align:left;padding:9px 10px;border-radius:10px;
+  border:1px solid var(--line-soft);background:var(--bg-3);transition:.16s;
+}
+.pool-item:hover{border-color:var(--gold-dim);background:#262b3c;transform:translateY(-2px)}
+.pool-item.on{border-color:var(--gold);background:#2b2413}
+.pool-item .box{
+  width:15px;height:15px;flex:0 0 15px;border-radius:4px;border:1.5px solid #454c69;
+  display:grid;place-items:center;font-size:10px;font-weight:900;color:#231a05;transition:.16s;
+}
+.pool-item.on .box{background:var(--gold);border-color:var(--gold)}
+.pool-item .nm{font-size:12.5px;font-weight:600;line-height:1.3}
+.pool-item .rt{font-size:9.5px;color:var(--txt-mute);letter-spacing:.3px}
+.pool-sec-title{
+  font-size:11px;font-weight:800;letter-spacing:1.4px;color:var(--gold);
+  margin:16px 0 8px;padding-top:10px;border-top:1px dashed var(--line-soft);
+  text-transform:none;
+}
+.pool-sec-title:first-child{margin-top:2px;padding-top:0;border-top:none}
+
+/* ============================================================
+   8. 构建结果卡
+   ============================================================ */
+.result-head{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  margin-bottom:14px;
+}
+.result-head .rtitle{font-size:13px;color:var(--txt-dim)}
+.result-head .rtitle b{color:var(--gold-bright)}
+/* 排序依据小字（同分规则也写在这里的 tooltip 上） */
+.sort-mini{color:var(--txt-mute);border-style:dashed;cursor:help}
+.build-list{display:flex;flex-direction:column;gap:12px}
+.build{
+  position:relative;border:1px solid var(--line);border-radius:12px;padding:15px 16px;
+  background:linear-gradient(160deg,var(--bg-2),var(--bg-1));transition:border-color .25s,transform .2s;
+  animation:bIn .22s ease-out both;
+}
+/* 每次重排后卡片轻轻浮现，让「位置变了」这件事看得见 */
+@keyframes bIn{from{opacity:.4;transform:translateY(7px)}to{opacity:1;transform:none}}
+.build:hover{border-color:#3b4260}
+.build.reco{
+  border-color:var(--gold);
+  box-shadow:0 0 0 1px rgba(232,182,76,.3),0 10px 28px rgba(232,182,76,.1);
+  background:linear-gradient(160deg,#221d10,var(--bg-1));
+}
+.badge-reco{
+  position:absolute;top:-11px;right:14px;font-size:10.5px;font-weight:900;letter-spacing:1.2px;
+  padding:4px 12px;border-radius:999px;color:#231a05;
+  background:linear-gradient(160deg,var(--gold-bright),var(--gold));
+  box-shadow:0 4px 14px rgba(232,182,76,.36);
+}
+.b-top{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+.b-name{font-size:15.5px;font-weight:800;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+/* 名次徽章：直观展示「第几名」（按核心件命中排序） */
+.b-rank{
+  font-size:11px;font-weight:900;color:var(--txt-mute);letter-spacing:.5px;
+  padding:1px 7px;border-radius:6px;border:1px solid var(--line-soft);background:var(--bg-0);
+}
+.build.reco .b-rank{color:#231a05;border-color:transparent;background:linear-gradient(160deg,var(--gold-bright),var(--gold))}
+.b-kind{
+  font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;letter-spacing:.6px;
+  color:var(--cyan);border:1px solid rgba(76,199,216,.35);background:rgba(76,199,216,.1);
+}
+.b-kind.sub{color:var(--purple);border-color:rgba(160,108,240,.4);background:rgba(160,108,240,.12)}
+.b-pct{font-size:20px;font-weight:900;color:var(--gold-bright);white-space:nowrap;line-height:1.1}
+.b-pct small{display:block;font-size:10px;color:var(--txt-mute);font-weight:600;text-align:right}
+.b-pct small.b-score{color:var(--txt-dim);opacity:.85}
+.b-one{font-size:13px;color:var(--txt-dim);margin-top:7px}
+.b-bar{height:7px;border-radius:99px;background:var(--bg-0);border:1px solid var(--line-soft);margin-top:11px;overflow:hidden}
+.b-bar i{
+  display:block;height:100%;width:0;border-radius:99px;
+  background:linear-gradient(90deg,#8a6a1e,var(--gold),var(--gold-bright));
+  transition:width .55s cubic-bezier(.22,1,.36,1);
+}
+.b-bar.low i{background:linear-gradient(90deg,#5d4530,#b07a4a)}
+.b-items{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.itm{
+  display:inline-flex;align-items:center;gap:6px;font-size:11.5px;padding:3.5px 9px;border-radius:7px;
+  border:1px solid var(--line);background:var(--bg-3);color:var(--txt-dim);
+}
+.itm.have{border-color:rgba(87,211,140,.45);background:rgba(87,211,140,.10);color:#a8f0c8}
+.itm.have::before{content:"✓";font-weight:900;font-size:10px}
+.itm.miss::before{content:"+";font-weight:900;font-size:11px;color:var(--gold)}
+.itm .r{font-size:9.5px;color:var(--txt-mute)}
+.b-syn{
+  margin-top:12px;padding:11px 13px;border-radius:10px;font-size:12.5px;color:var(--txt-dim);
+  border-left:3px solid var(--gold-dim);background:rgba(232,182,76,.05);
+}
+.b-syn b{color:var(--gold-bright)}
+.b-miss{margin-top:12px}
+.b-miss .mh{
+  font-size:11.5px;font-weight:800;letter-spacing:.8px;color:var(--warn);margin-bottom:7px;
+  display:flex;align-items:center;gap:7px;
+}
+.b-miss .mh::before{content:"🛒";font-size:12px}
+/* 摊开的作用说明表 */
+.b-why{margin-top:12px;display:flex;flex-direction:column;gap:7px}
+.why-row{
+  display:flex;gap:10px;font-size:12px;padding:8px 11px;border-radius:9px;
+  background:var(--bg-0);border:1px solid var(--line-soft);
+}
+.why-row .w-n{font-weight:800;color:var(--gold-bright);flex:0 0 auto;min-width:76px}
+.why-row .w-e{color:var(--txt-dim)}
+/* 来源标注：已持有 / 合成 */
+.why-row .w-src{
+  margin-left:auto;flex:0 0 auto;font-size:10px;font-weight:800;letter-spacing:.4px;
+  padding:2px 7px;border-radius:99px;border:1px solid rgba(87,211,140,.4);
+  color:#8ee7b4;background:rgba(87,211,140,.10);
+}
+.why-row .w-src.syn{color:#f0cf82;border-color:rgba(232,182,76,.45);background:rgba(232,182,76,.10)}
+
+/* ---------- 合成：徽章 / 可合成件 / 材料进度 / 合成面板 ---------- */
+.chip-synth{
+  display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:800;
+  padding:4px 10px;border-radius:99px;color:#f0cf82;
+  border:1px dashed rgba(232,182,76,.5);background:rgba(232,182,76,.08);
+}
+.itm .cbadge{
+  margin-left:6px;font-size:9.5px;font-weight:800;letter-spacing:.3px;
+  padding:1px 5px;border-radius:99px;background:rgba(232,182,76,.18);
+  border:1px solid rgba(232,182,76,.45);color:#f5d78e;
+}
+.itm .cbadge.can{background:rgba(76,199,216,.16);border-color:rgba(76,199,216,.45);color:#9fe6f0}
+.itm.have.synth{border-style:dashed}
+.itm.can{
+  border-color:rgba(232,182,76,.5);background:rgba(232,182,76,.09);color:#f5d78e;
+}
+.itm.can .r{color:rgba(245,215,142,.8)}
+
+/* 合成面板 */
+.craft-panel .panel-head h3 .k{background:linear-gradient(135deg,#e8b64c,#4cc7d8)}
+.craft-list{display:flex;flex-direction:column;gap:9px}
+.craft-row{
+  border:1px solid var(--line-soft);border-radius:11px;padding:10px 12px;background:var(--bg-0);
+  transition:border-color .2s ease, background .2s ease, transform .2s ease;
+}
+.craft-row.ready{border-color:rgba(232,182,76,.45);background:rgba(232,182,76,.06)}
+.craft-row.done{border-color:rgba(87,211,140,.4);background:rgba(87,211,140,.07)}
+.craft-row:hover{transform:translateY(-2px)}
+.cr-top{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.cr-name{font-size:13px;font-weight:800}
+.cr-name .rt{font-size:9.5px;color:var(--txt-mute);margin-left:6px;font-weight:600}
+.cr-prog{margin-left:auto;font-size:11px;font-weight:800;color:var(--txt-mute)}
+.craft-row.ready .cr-prog{color:var(--gold-bright)}
+.craft-row.done .cr-prog{color:var(--ok)}
+.cr-mats{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.mat{
+  display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;
+  padding:3px 8px;border-radius:8px;border:1px solid var(--line);color:var(--txt-mute);
+  background:#20263433;
+}
+.mat.ok{color:#a8f0c8;border-color:rgba(87,211,140,.45);background:rgba(87,211,140,.10)}
+.mat.no{color:#e8a6a6;border-color:rgba(232,120,120,.35);background:rgba(232,120,120,.08)}
+.mat .mc{font-size:9.5px;opacity:.85}
+.cr-act{display:flex;gap:8px;align-items:center;margin-top:9px}
+.craft-empty{color:var(--txt-mute);font-size:12.5px;padding:10px 2px}
+.craft-sum{
+  display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;
+}
+.craft-sum .s{
+  font-size:11.5px;font-weight:800;padding:4px 10px;border-radius:99px;
+  border:1px solid var(--line);color:var(--txt-dim);background:var(--bg-0);
+}
+.craft-sum .s b{color:var(--gold-bright)}
+
+/* ===================== 商店推荐（按回合阶段） ===================== */
+.reco-panel{border-color:rgba(232,182,76,.28)}
+.phase-bar{
+  display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:14px;
+  padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--bg-0);
+}
+.ph-label{font-size:12px;font-weight:800;color:var(--txt-mute);margin-right:2px}
+.ph-btn{
+  font-family:inherit;font-size:12.5px;font-weight:800;cursor:pointer;
+  padding:7px 12px;border-radius:99px;color:var(--txt-dim);
+  border:1px solid var(--line);background:var(--bg-1);transition:.22s;
+}
+.ph-btn small{font-size:10.5px;font-weight:700;opacity:.72;margin-left:2px}
+.ph-btn:hover{border-color:var(--gold);color:var(--txt)}
+.ph-btn.on{
+  background:linear-gradient(135deg,rgba(232,182,76,.26),rgba(232,182,76,.1));
+  border-color:var(--gold-bright);color:#fff;box-shadow:0 0 0 2px rgba(232,182,76,.14);
+}
+.ph-note{font-size:11.5px;color:var(--txt-mute);margin-left:auto}
+.reco-list{display:flex;flex-direction:column;gap:7px}
+.reco-empty{
+  font-size:12.5px;color:var(--txt-mute);padding:16px 14px;border-radius:10px;
+  border:1px dashed var(--line);background:var(--bg-0);line-height:1.7;
+}
+.rec-row{
+  display:flex;align-items:center;gap:9px;flex-wrap:wrap;
+  padding:9px 12px;border-radius:11px;border:1px solid var(--line);
+  background:var(--bg-0);transition:.2s;
+}
+.rec-row:hover{border-color:rgba(232,182,76,.45);transform:translateX(2px)}
+.rec-row.owned{opacity:.55}
+.rec-idx{
+  width:20px;height:20px;flex:0 0 20px;border-radius:50%;display:grid;place-items:center;
+  font-size:10.5px;font-weight:900;color:var(--bg-0);background:var(--txt-mute);
+}
+.rec-name{font-size:13.5px;font-weight:900}
+.rec-rar{
+  font-size:10px;font-weight:800;padding:2px 7px;border-radius:99px;
+  border:1px solid;background:rgba(255,255,255,.02);
+}
+.rec-tag{
+  font-size:10px;font-weight:800;padding:2px 7px;border-radius:99px;
+  border:1px solid var(--line);color:var(--txt-mute);background:var(--bg-1);
+}
+.rec-tag.can{color:#9fe6f0;border-color:rgba(76,199,216,.45);background:rgba(76,199,216,.12)}
+.rec-prog{font-size:11px;font-weight:800;color:var(--txt-mute)}
+.rec-prog.ok{color:var(--ok)}
+.rec-refs{font-size:11px;color:var(--txt-mute);margin-left:auto}
+.rec-btn{
+  font-family:inherit;font-size:11.5px;font-weight:800;cursor:pointer;margin-left:auto;
+  padding:5px 11px;border-radius:99px;color:var(--txt-dim);
+  border:1px solid var(--line);background:var(--bg-1);transition:.2s;
+}
+.rec-btn:hover{border-color:var(--gold);color:var(--gold-bright)}
+.rec-row.owned .rec-btn{color:var(--ok);border-color:rgba(87,211,140,.45)}
+.reco-more{font-size:11.5px;color:var(--txt-mute);padding:8px 4px 0}
+
+/* ===================== 升级路线（流派卡折叠区） ===================== */
+.chain{
+  margin-top:12px;border:1px solid var(--line);border-radius:12px;
+  background:var(--bg-0);overflow:hidden;
+}
+.chain summary{
+  cursor:pointer;list-style:none;padding:10px 13px;font-size:12.5px;font-weight:800;
+  color:var(--txt-dim);transition:.2s;
+}
+.chain summary::-webkit-details-marker{display:none}
+.chain summary:hover{color:var(--gold-bright);background:rgba(232,182,76,.06)}
+.chain[open] summary{border-bottom:1px solid var(--line);color:var(--gold-bright)}
+.chain-body{padding:11px 13px;display:flex;flex-direction:column;gap:11px}
+.chain-stage{padding:9px 11px;border-radius:10px;border:1px solid var(--line);background:var(--bg-1)}
+.chain-stage.cur{border-color:rgba(232,182,76,.5);background:rgba(232,182,76,.07)}
+.c-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px}
+.c-t{font-size:12px;font-weight:900;color:var(--gold-bright)}
+.c-note{font-size:11px;color:var(--txt-mute);margin-left:auto}
+.c-items{display:flex;flex-wrap:wrap;gap:6px}
+.c-itm{
+  display:inline-flex;align-items:center;gap:6px;font-size:11.5px;
+  padding:4px 9px;border-radius:8px;border:1px solid var(--line);background:var(--bg-0);
+}
+.c-itm b{font-weight:900}
+.c-r{font-size:10.5px;color:var(--txt-mute)}
+.c-b{font-size:10px;font-weight:800;padding:1px 6px;border-radius:99px;border:1px solid var(--line);color:var(--txt-mute)}
+.c-b.can{color:#9fe6f0;border-color:rgba(76,199,216,.45)}
+.c-b.syn{color:var(--gold-bright);border-color:rgba(232,182,76,.5)}
+.c-b.miss{color:#e8734c;border-color:rgba(232,115,76,.4)}
+@media (max-width:560px){
+  .ph-note{margin-left:0;width:100%}
+  .rec-refs{margin-left:0}
+  .rec-btn{margin-left:0}
+}
+
+.no-sel{
+  text-align:center;color:var(--txt-mute);font-size:13.5px;padding:34px 16px;
+  border:1px dashed var(--line);border-radius:12px;background:var(--bg-0);
+}
+.no-sel b{color:var(--gold-bright);display:block;font-size:15px;margin-bottom:6px}
+
+/* ============================================================
+   9. 机制说明 + 页脚
+   ============================================================ */
+.mech-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.mech{
+  padding:16px 17px;border-radius:12px;border:1px solid var(--line);background:var(--bg-2);
+  transition:transform .2s,border-color .2s;
+}
+.mech:hover{transform:translateY(-3px);border-color:var(--gold-dim)}
+.mech .m-ic{font-size:20px;margin-bottom:8px}
+.mech h4{font-size:14px;font-weight:800;margin-bottom:6px}
+.mech p{font-size:12.5px;color:var(--txt-dim)}
+.foot{
+  border-top:1px solid var(--line-soft);margin-top:40px;padding:34px 0 46px;
+  background:linear-gradient(180deg,transparent,rgba(0,0,0,.35));
+}
+.foot-in{display:flex;justify-content:space-between;gap:26px;flex-wrap:wrap}
+.foot .f-col{max-width:560px}
+.foot h5{font-size:12px;letter-spacing:1.6px;color:var(--gold);font-weight:800;margin-bottom:10px;text-transform:uppercase}
+.foot p,.foot li{font-size:12.5px;color:var(--txt-mute);line-height:1.85}
+.foot ul{list-style:none}
+.foot li::before{content:"▸ ";color:var(--gold-dim)}
+.foot a{color:var(--txt-dim);text-decoration:none;border-bottom:1px dashed var(--line)}
+.foot a:hover{color:var(--gold-bright)}
+.disclaim{
+  margin-top:24px;padding-top:20px;border-top:1px solid var(--line-soft);
+  font-size:12px;color:var(--txt-mute);
+}
+.disclaim b{color:var(--warn)}
+
+/* 渐入动画 */
+.reveal{opacity:0;transform:translateY(22px);transition:opacity .6s ease,transform .6s cubic-bezier(.22,1,.36,1)}
+.reveal.in{opacity:1;transform:none}
+
+/* ============================================================
+   10. 响应式
+   ============================================================ */
+@media (max-width:1080px){
+  .class-grid{grid-template-columns:repeat(3,1fr)}
+  .board{grid-template-columns:1fr}
+}
+@media (max-width:820px){
+  .nav-links{
+    position:absolute;top:62px;left:0;right:0;flex-direction:column;gap:2px;padding:10px;
+    background:rgba(12,13,19,.98);border-bottom:1px solid var(--line);
+    transform:translateY(-12px);opacity:0;pointer-events:none;transition:.25s;
+  }
+  .nav-links.show{transform:none;opacity:1;pointer-events:auto}
+  .nav-links a{padding:12px 14px}
+  .burger{display:block}
+  .ver-pill{display:none}
+  .class-grid{grid-template-columns:repeat(2,1fr)}
+  .hero{padding-top:108px}
+  .hero-stats{gap:22px}
+}
+@media (max-width:560px){
+  .class-grid{grid-template-columns:1fr}
+  .pool{grid-template-columns:repeat(auto-fill,minmax(104px,1fr));max-height:290px}
+  .b-top{flex-direction:column;gap:6px}
+  .b-pct{text-align:left}
+  .b-pct small{text-align:left}
+  .hero-btns .btn{width:100%;justify-content:center}
+  .sec{padding:48px 0}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.01ms !important;transition-duration:.01ms !important}
+  html{scroll-behavior:auto}
+  .reveal{opacity:1;transform:none}
+}
+</style>
+</head>
+<body>
+
+<!-- ===================== 导航栏 ===================== -->
+<nav class="nav">
+  <div class="wrap nav-in">
+    <div class="brand">
+      <div class="icon">🎒</div>
+      <div>
+        背包乱斗 · 构筑推荐器
+        <small>BACKPACK BATTLES BUILD HELPER</small>
+      </div>
+    </div>
+    <div class="nav-links" id="navLinks">
+      <a href="#classes">职业选择</a>
+      <a href="#shop">商店输入</a>
+      <a href="#mech">核心机制</a>
+      <a href="#about">数据说明</a>
+    </div>
+    <div class="nav-meta">
+      <span class="ver-pill" id="verPill"><span class="dot"></span>版本 <b id="verTxt">1.1.9b</b></span>
+      <span class="synth-pill" title="自动检测核心件的合成配方：材料齐全时按「已持有」计入匹配度">⚗️ 含装备合成检测</span>
+      <button class="burger" id="burger" aria-label="打开菜单" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </div>
+</nav>
+
+<!-- ===================== Hero ===================== -->
+<header class="hero">
+  <div class="wrap">
+    <div class="tagline">🛒 商店刷到什么，就帮你决定下一步买什么 · <b>非官方构筑工具</b></div>
+    <h1 class="hero-title">把随机商店<br>拼成一套成型构筑</h1>
+    <p class="hero-sub">
+      选择你本局的职业，勾选（或手动输入）已经买到 / 商店正在卖的装备，
+      页面会按 <code>核心装备命中数</code> 实时给每个流派打分，告诉你
+      <b>该往哪个流派走</b>、以及 <b>还差哪几件核心件</b>。
+    </p>
+    <div class="hero-btns">
+      <a class="btn btn-gold" href="#classes">⚔️ 开始选职业</a>
+      <a class="btn btn-ghost" href="#shop">🎯 直接输入装备</a>
+    </div>
+    <div class="hero-stats">
+      <div class="st reveal"><b id="statClasses">7</b><span>可玩职业</span></div>
+      <div class="st reveal"><b id="statBuilds">24</b><span>收录流派</span></div>
+      <div class="st reveal"><b id="statItems">0</b><span>装备数据（含通用）</span></div>
+      <div class="st reveal"><b id="statVersion">1.1.9b</b><span>数据版本</span></div>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== 职业选择 ===================== -->
+<section class="sec" id="classes">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="sec-kicker">Step 01 · 选择职业</div>
+      <h2>你这局玩的是哪个职业？</h2>
+      <p>不同职业的物品池与子职业分支完全不同，先选定职业，下方才会出现对应的流派与装备清单。</p>
+    </div>
+    <div class="class-grid" id="classGrid"><!-- JS 渲染 --></div>
+  </div>
+</section>
+
+<!-- ===================== 商店输入 + 推荐 ===================== -->
+<section class="sec" id="shop">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="sec-kicker">Step 02 · 商店输入</div>
+      <h2>勾选你手上 / 商店里的装备</h2>
+      <p>
+        支持「快捷勾选」与「自由文本输入」两种方式（文本用逗号、空格或顿号分隔）。
+        每勾一件，右侧流派匹配度就会重新计算并自动排序，最匹配的流派会被标记为 <b>推荐</b>。
+      </p>
+    </div>
+
+    <div class="board">
+      <!-- 左：输入面板 -->
+      <div class="panel reveal">
+        <div class="panel-head">
+          <h3><span class="k">1</span><span id="poolTitle">商店输入</span></h3>
+          <div style="display:flex;gap:8px">
+            <button class="btn-mini" id="btnClear">清空</button>
+            <button class="btn-mini" id="btnAll">全选核心件</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="picked" id="pickedBox">
+            <span class="empty">还没有选择任何装备 —— 先在下面点选，或直接输入名字。</span>
+          </div>
+
+          <div class="field-row">
+            <input class="inp" id="freeInput" type="text" placeholder="自由输入，如：短弓, 幸运四叶草 刺猬"
+                   autocomplete="off" aria-label="自由输入装备名称">
+            <button class="btn-sm" id="btnAdd">添加</button>
+          </div>
+
+          <div class="pool-sec-title" id="poolLabel">该职业相关装备（点击勾选）</div>
+          <div class="pool" id="pool"><!-- JS 渲染：职业核心件 + 通用物品（按类别分组） --></div>
+        </div>
+      </div>
+
+      <!-- 右：推荐结果 -->
+      <div class="panel reveal">
+        <div class="panel-head">
+          <h3><span class="k">2</span>流派匹配度</h3>
+          <span class="btn-mini" id="scoreHint">等待选择职业</span>
+        </div>
+        <div class="panel-body">
+          <div class="no-sel" id="emptyState">
+            <b>先在上方选择一个职业</b>
+            选定职业后，这里会实时列出该职业所有流派的匹配度排序。
+          </div>
+          <div class="result-head" id="resultHead" style="display:none">
+            <div class="rtitle">当前最匹配：<b id="topName">—</b></div>
+            <div class="btn-mini" id="matchCount">已命中 0 件核心件</div>
+            <!-- 排序依据：卡片顺序 = 核心件命中降序，每次输入/阶段切换都会重排 -->
+            <div class="btn-mini sort-mini" id="sortHint"
+                 title="每次勾选 / 文本输入 / 切换回合阶段都会重新排序">排序：核心件命中 ↓</div>
+          </div>
+          <div class="build-list" id="buildList"><!-- JS 渲染 --></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 商店推荐：按回合阶段过滤，从最初级装备排起 -->
+    <div class="panel reveal reco-panel" id="recoPanel" style="margin-top:18px">
+      <div class="panel-head">
+        <h3><span class="k">🛒</span>商店推荐 · 从最初级装备买起</h3>
+        <span class="btn-mini" id="recoHint">前期 1-3 回合</span>
+      </div>
+      <div class="panel-body">
+        <div class="phase-bar">
+          <span class="ph-label">当前回合</span>
+          <button class="ph-btn" data-phase="0">🌱 前期 <small>1-3 回合</small></button>
+          <button class="ph-btn" data-phase="1">⚔️ 中期 <small>4-6 回合</small></button>
+          <button class="ph-btn" data-phase="2">👑 后期 <small>7+ 回合</small></button>
+          <span class="ph-note" id="phaseNote"></span>
+        </div>
+        <div class="reco-list" id="recoList"><!-- JS 渲染 --></div>
+        <div class="craft-sum" id="recoSum" style="margin-top:12px"></div>
+      </div>
+    </div>
+
+    <!-- 合成面板：列出当前职业全部核心件的配方与材料进度 -->
+    <div class="panel reveal craft-panel" id="craftPanel" style="margin-top:18px">
+      <div class="panel-head">
+        <h3><span class="k">⚗️</span><span id="craftTitle">合成面板 · 装备合成检测</span></h3>
+        <div style="display:flex;gap:8px">
+          <button class="btn-mini" id="btnCraftReady">标记所有可合成</button>
+          <button class="btn-mini" id="btnCraftReset">重置合成</button>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div class="craft-sum" id="craftSum"></div>
+        <div class="craft-list" id="craftList"><!-- JS 渲染 --></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== 核心机制 ===================== -->
+<section class="sec" id="mech">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="sec-kicker">Step 03 · 底层机制</div>
+      <h2>看懂这几个词，构筑就不会走偏</h2>
+      <p>背包乱斗的流派强弱几乎都围绕下面这套资源循环展开，看到商店里加这些数值的装备，优先考虑。</p>
+    </div>
+    <div class="mech-grid">
+      <div class="mech reveal">
+        <div class="m-ic">🪙</div>
+        <h4>金币与商店刷新</h4>
+        <p>每回合金币有限，装备靠随机刷新出现。<b>越早决定流派</b>，越能把有限的金币花在同一条核心线上，而不是东买一件西买一件。</p>
+      </div>
+      <div class="mech reveal">
+        <div class="m-ic">⚡</div>
+        <h4>触发 / 冷却（星星物品）</h4>
+        <p>带「星星」标记的物品按冷却自动触发，是绝大多数流派的主引擎。加触发速度、推进冷却的装备价值极高。</p>
+      </div>
+      <div class="mech reveal">
+        <div class="m-ic">🔥</div>
+        <h4>增益与减益堆叠</h4>
+        <p>狂热、充能、恢复、尖刺、幸运属于增益；中毒、冰冷、致盲属于减益。多数流派靠<b>堆层数</b>滚雪球，层数越高收益越大。</p>
+      </div>
+      <div class="mech reveal">
+        <div class="m-ic">🧩</div>
+        <h4>合成与背包格</h4>
+        <p>两件低阶装备可在商店合成高阶件，但会占用背包格子。合成路线清晰的流派（如游侠弓系）更容易成型。</p>
+      </div>
+      <div class="mech reveal">
+        <div class="m-ic">🎖️</div>
+        <h4>子职业分支</h4>
+        <p>每个职业有多个子职业，用对应「子职业物品」解锁，等于官方预设的流派方向。本工具把子职业也当作一种流派收录。</p>
+      </div>
+      <div class="mech reveal">
+        <div class="m-ic">🧭</div>
+        <h4>怎么用这个工具</h4>
+        <p>早期装备少时，匹配度普遍偏低是正常的 —— 看「还缺哪些核心件」那一栏，那就是你下一轮商店的购物清单。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== 页脚 / 数据说明 ===================== -->
+<footer class="foot" id="about">
+  <div class="wrap">
+    <div class="foot-in">
+      <div class="f-col">
+        <h5>数据来源</h5>
+        <ul>
+          <li>Backpack Battles 中文 Wiki —— <a href="https://backpackbattles.wiki.gg/zh/wiki/角色" target="_blank" rel="noopener">角色</a> / 各职业条目（专属物品、合成、子职业表）</li>
+          <li>版本号取自 <a href="https://backpackbattles.wiki.gg/zh/wiki/版本更新" target="_blank" rel="noopener">版本更新页</a>，当前收录 <b id="footVer">1.1.9b</b></li>
+          <li>所有物品名均使用 Wiki 官方简体中文译名；流派命名为社区通用叫法，仅供参考</li>
+          <li><b>通用物品</b>：商店输入面板的通用清单照抄 Wiki <a href="https://backpackbattles.wiki.gg/zh/wiki/通用" target="_blank" rel="noopener">通用页</a>的
+            <b>165</b> 件（另附 6 件被本页配方引用的非通用件），按官方「物品类型」列分为
+            材料 / 食物 / 武器 / 盾牌 / 护甲 / 头盔 / 手套 / 鞋子 / 配饰 / 背包 / 宠物 / 魔药 / 技能 共 13 组，稀有度照抄官方表</li>
+          <li><b>合成配方</b>：Wiki 未提供集中配方表（配方只散落在每件物品自身页面的「合成配方」小节），
+            其中魔药类已逐条核对（如 魔法魔药 = 生命魔药 + 蓝莓、强力生命魔药 = 生命魔药 + 治疗草药、
+            吸血魔药 = 强力生命魔药 + 血色护符、强力吸血魔药 = 吸血魔药 + 大煮锅，稀有度 神级），其余按社区整理 + 游戏常识填写，
+            <b>可能存在版本差异，请以游戏内为准</b></li>
+          <li>当前 <b>116</b> 个去重核心件中 <b>76</b> 个已收录配方（<b>65.5%</b>），其余 40 个按「商店直购件」处理；
+            两类物品的初始包/子职业物品（如棋子、拼图背包、龙蛋、幽灵伙伴）需要角色解锁或进化，未计入配方</li>
+          <li><b>进度条口径</b>：流派卡上的百分比是<b>路线进度（含基础件）</b>
+            = 已持有 ∪ 材料齐全可合成 ∪ 手动标记 的「升级路线」件数 ÷ 路线总件数，
+            所以前期只买到基础材料时进度条也会动；旁边小字「核心件命中」才是决定排序与「推荐」标的评分口径</li>
+          <li><b>按回合分阶段的商店推荐</b>：新增「当前回合」选择器（前期 1-3 / 中期 4-6 / 后期 7+），
+            按物品稀有度 tier 过滤推荐清单，并在每个流派卡内展开「🗺️ 升级路线」；
+            回合门槛（<code>PHASES</code> 的 <code>maxTier</code>）是按经济节奏估算的<b>近似值</b>，不代表游戏内的硬性刷新规则</li>
+          <li><b>流派卡排序规则</b>：流派卡会按「核心件命中」从高到低<b>实时重排</b>（不是只换「推荐」标），
+            每次勾选装备 / 文本框输入 / 切换回合阶段 / 点推荐行「标记已持有」都会立即重算位置；
+            同分时先看<b>路线进度（含基础件）</b>谁更接近成型，仍相同则保持职业内原始顺序（稳定排序）；
+            卡片左上角的 <b>#1 #2 #3</b> 就是当前名次，鼠标悬停结果区右上角「排序：核心件命中 ↓」可看完整规则</li>
+        </ul>
+      </div>
+      <div class="f-col">
+        <h5>更新数据的方法</h5>
+        <ul>
+          <li>打开本文件，找到脚本顶部注释的 <b>GAME_META</b>（改版本号 / 数据日期）</li>
+          <li>再找 <b>BUILDS</b> 常量：每个职业是一组 <code>{id,name,builds:[...]}</code></li>
+          <li>每个流派含 <code>name / desc / core[] / synth / synergy</code>，照着已有格式加一行即可</li>
+          <li>合成配方单独放在 <b>RECIPES</b> 常量里：<code>{ "成品名": [{n:"材料名",c:数量,r:"稀有度"}] }</code>，
+            启动时会自动注入到每个核心件的 <code>recipe</code> 字段；同名材料写在同一项里加数量即可（如短弓×2）</li>
+          <li>评分口径：<code>命中核心件数 ÷ 核心件总数</code>，其中「命中」= 直接持有 ∪ 材料齐全可合成 ∪ 手动标记已合成；
+            进度条另算「路线进度」= 路线内命中件数 ÷ 路线总件数</li>
+          <li>通用物品放在 <b>COMMON_GROUPS</b> 常量里（<code>[{id,title,items:[{n,r}]}]</code>），
+            改分组标题或增删条目即可；<code>COMMON_POOL</code> 是拍平后的兼容数组</li>
+          <li>稀有度体系：<code>RARITY_TIER</code> 把 <b>普通→罕见→史诗→传说→神级→特别</b> 映射为 tier <b>0→5</b>；
+            稀有度查找优先级 = 核心件 <code>it.r</code> → <code>RECIPES</code> 材料的 <code>r</code> → 通用物品表 → <code>MID_RARITY</code> 兜底</li>
+          <li>阶段门槛：<code>PHASES</code> 里每段一个 <code>maxTier</code>（前期 1 / 中期 2 / 后期 5），
+            改这里即可调整「几回合该买多贵的东西」</li>
+        </ul>
+      </div>
+    </div>
+    <div class="disclaim">
+      <b>非官方工具声明：</b>本页面为非官方粉丝制作的构筑参考工具，与 Backpack Battles 的开发团队、发行商及 Wiki 官方均无任何关联，
+      不使用任何游戏内素材。页面数据来自公开 Wiki，可能滞后于最新版本；流派强度只反映「装备契合度」，
+      不代表实际对局胜负，请以实战与社区最新攻略为准。
+    </div>
+  </div>
+</footer>
+
+<script>
+/* ==================================================================
+   ★★★  数 据 区（想更新版本只需改这一段）  ★★★
+   ------------------------------------------------------------------
+   数据来源：Backpack Battles 中文 Wiki（backpackbattles.wiki.gg/zh）
+   收录版本：1.1.9b（2026-09-18）
+   说明：core 中的物品名使用 Wiki 官方简体中文译名；
+        kind:"sub" 表示该「流派」实际是官方子职业分支。
+   ================================================================== */
+
+/** 全局元信息：版本号、数据日期、来源标注 */
+const GAME_META = {
+  version: "1.1.9b",
+  versionDate: "2026-09-18",
+  previous: "1.1.9（2026-09-16）",
+  source: "Backpack Battles 中文 Wiki",
+  sourceUrl: "https://backpackbattles.wiki.gg/zh/wiki/版本更新",
+  classesUrl: "https://backpackbattles.wiki.gg/zh/wiki/角色",
+  // 版本小抄：方便玩家对号入座
+  extra: ["1.1.0（2026-03-27）新增职业：工程师", "1.0.0 正式版新增职业：魔法师、冒险家"]
+};
+
+/**
+ * BUILDS —— 全部构筑数据
+ * 结构：
+ *   { id, name, en, emoji, color, role, desc, tags:[], builds:[...] }
+ *   build: { name, kind?, desc, core:[{n,r,e}], synth:[], synergy }
+ *     n = 物品中文名（与商店内译名一致，用于匹配）
+ *     r = 稀有度标记（用于展示：普通/罕见/史诗/传说/神级/特别/子职业）
+ *     e = 一句话作用（勾选后展示「你已有的装备在这个流派里干什么」）
+ *     kind:"sub" → 该条实际是子职业分支
+ */
+const BUILDS = [
+  /* ------------------------------------------------------------------
+     1. 游侠 Ranger —— 幸运 / 暴击 / 远程
+     数据：Wiki 游侠页（专属物品、合成、子职业表）
+     ------------------------------------------------------------------ */
+  {
+    id: "ranger", name: "游侠", en: "Ranger", emoji: "🏹", color: "#57d38c",
+    role: "幸运 · 暴击 · 远程",
+    desc: "靠幸运与暴击率把远程伤害叠高，宠物与毒弓是两条最稳的成型路线。",
+    tags: ["暴击", "宠物", "中毒", "远程"],
+    builds: [
+      {
+        name: "暴击弓流", desc: "把暴击率与幸运拉满，靠短弓/弓的高攻速打出成吨暴击伤害。",
+        core: [
+          { n: "短弓", r: "普通", e: "攻速快的远程主武器，暴击流的基础输出件" },
+          { n: "弓箭", r: "普通", e: "远程基础件，可合成为更高阶的弓" },
+          { n: "幸运四叶草", r: "罕见", e: "提供幸运，幸运会转化为暴击与随机收益" },
+          { n: "幽光", r: "史诗", e: "幸运与暴击流的核心增益件，越早拿到越滚雪球" },
+          { n: "穿甲箭", r: "子职业", e: "猎人的招牌弹药，无视护盾直击本体" }
+        ],
+        synth: ["尖牙短弓 ← 短弓 + 尖牙", "尖牙弓 ← 弓箭 + 尖牙", "大师雪人"],
+        synergy: "逻辑是<b>先堆暴击率、再堆攻速</b>：幸运四叶草/幽光负责暴击阈值，短弓负责把暴击次数最大化，穿甲箭负责穿透护盾。"
+      },
+      {
+        name: "毒弓流", desc: "颠茄剧毒弓是核心，靠中毒层数无视护盾持续掉血，专治高护盾阵容。",
+        core: [
+          { n: "颠茄剧毒短弓", r: "史诗", e: "毒弓流的绝对核心，每次命中叠加中毒" },
+          { n: "颠茄剧毒弓", r: "传说", e: "剧毒弓系的上位合成件" },
+          { n: "短弓", r: "普通", e: "剧毒弓的合成底材" },
+          { n: "弓箭", r: "普通", e: "剧毒弓的合成底材" },
+          { n: "剧毒常春藤", r: "子职业", e: "开拓者分支，把中毒收益进一步放大" }
+        ],
+        synth: ["颠茄剧毒短弓 ← 短弓 + 颠茄", "颠茄剧毒弓 ← 弓箭 + 颠茄"],
+        synergy: "中毒<b>无视护盾</b>，所以这条流派不需要堆穿透，只要把层数堆高、把战斗拖长即可压死护盾流。"
+      },
+      {
+        name: "宠物流（兽王）", desc: "鼠鼠 / 松鼠 / 刺猬铺场，宠物吃满幸运与增益，靠数量与复制滚雪球。",
+        core: [
+          { n: "鼠鼠", r: "普通", e: "低费宠物，铺场起步件" },
+          { n: "松鼠", r: "罕见", e: "主力宠物，提供稳定的额外输出" },
+          { n: "松鼠射手", r: "史诗", e: "松鼠合成上位，远程输出质变" },
+          { n: "刺猬", r: "普通", e: "反伤宠物，配合尖刺类增益" },
+          { n: "一碗零食", r: "子职业", e: "兽王招牌，全面强化所有宠物" }
+        ],
+        synth: ["松鼠射手 ← 松鼠 + 弓系件", "白色百合花项圈 ← 项圈 + 百合花"],
+        synergy: "宠物流的收益随<b>宠物数量</b>线性增长，所以「一碗零食 + 复制类增益」是这套的上限所在。"
+      },
+      {
+        name: "丛林守护者（自然幸运）", desc: "把幸运转成恢复与尖刺，走耐久反击路线，适合拖到中后期。",
+        kind: "sub",
+        core: [
+          { n: "巨大四叶草", r: "子职业", e: "丛林守护者核心，放大小幸运的收益" },
+          { n: "幸运四叶草", r: "罕见", e: "幸运来源，支撑巨大四叶草" },
+          { n: "橡子颈圈", r: "罕见", e: "自然属性配饰，强化自然物品联动" },
+          { n: "萝卜", r: "普通", e: "廉价自然食物，提供早期续航" },
+          { n: "世界树树叶", r: "子职业", e: "生命缚誓者分支，幸运越高恢复越强" }
+        ],
+        synth: ["白色百合花项圈", "大师雪人"],
+        synergy: "幸运在本流派里不只是暴击，还<b>转化为恢复与减伤</b>，属于「越打越硬」的反击型构筑。"
+      }
+    ]
+  },
+
+  /* ------------------------------------------------------------------
+     2. 收割者 Reaper —— 持续伤害 / 减益
+     数据：Wiki 收割者页（专属物品 + 扑克牌系 + 子职业表）
+     ------------------------------------------------------------------ */
+  {
+    id: "reaper", name: "收割者", en: "Reaper", emoji: "💀", color: "#a06cf0",
+    role: "持续伤害 · 减益 · 吸血",
+    desc: "以中毒 / 吸血 / 诅咒为核心，靠扑克牌与镰刀把对手慢慢磨死。",
+    tags: ["中毒", "吸血", "扑克牌", "召唤"],
+    builds: [
+      {
+        name: "中毒堆叠流", desc: "瘟疫烧瓶 + 致幻蘑菇铺中毒，层数一高对手回血都追不上。",
+        core: [
+          { n: "强力瘟疫烧瓶", r: "传说", e: "中毒流的核心引擎，直接堆叠大量中毒" },
+          { n: "恶魔烧瓶", r: "史诗", e: "烧瓶系起手件，可向强力版本合成" },
+          { n: "致幻蘑菇", r: "罕见", e: "持续叠加中毒的低费核心" },
+          { n: "蟾蜍", r: "子职业", e: "女巫系宠物，中毒联动" },
+          { n: "大煮锅", r: "子职业", e: "炼金术士招牌，强化所有药水/烧瓶" }
+        ],
+        synth: ["强力瘟疫烧瓶 ← 恶魔烧瓶 + 瘟疫材料", "强力恶魔烧瓶 ← 恶魔烧瓶 + 强化材料"],
+        synergy: "中毒是一条<b>时间函数</b>曲线：战斗越长收益越大，因此要同时带减伤/吸血类装备来保证自己活得比对手久。"
+      },
+      {
+        name: "吸血续航流", desc: "吸血鬼梳子 + 强力吸血魔药，一边掉血一边回血，打消耗战最强的形态。",
+        core: [
+          { n: "强力吸血魔药", r: "神级", e: "吸血流核心，直接提供高额吸血层数" },
+          { n: "吸血鬼梳子", r: "子职业", e: "吸血鬼夫人招牌，吸血转化效率质变" },
+          { n: "黑暗莲花", r: "史诗", e: "稳定提供续航与减益联动" },
+          { n: "战镰", r: "史诗", e: "主力近战武器，配合吸血站桩输出" },
+          { n: "死神镰刀", r: "传说", e: "镰刀系终局武器，高伤配合吸血滚雪球" }
+        ],
+        synth: ["强力吸血魔药 ← 吸血魔药 + 大煮锅（wiki 核对）", "强力神圣魔药 / 强力魔法魔药"],
+        synergy: "这条流派的核心不是爆发而是<b>净生命差</b>：只要每回合吸血 > 对手输出，就能稳定吃下所有慢速阵容。"
+      },
+      {
+        name: "扑克牌流", desc: "牌堆 + 愚者/恋人/小丑牌，靠花色组合触发额外效果，娱乐性与上限都很高。",
+        core: [
+          { n: "牌堆", r: "史诗", e: "扑克牌流的引擎，决定你能抽多少张牌" },
+          { n: "黑桃A", r: "传说", e: "高价值单牌，配合花色联动爆发" },
+          { n: "愚者", r: "史诗", e: "随机性收益牌，牌堆越厚越强" },
+          { n: "恋人", r: "史诗", e: "提供增益与恢复的联动牌" },
+          { n: "小丑牌", r: "罕见", e: "低费过渡牌，补齐花色" },
+          { n: "命运小姐", r: "传说", e: "牌系核心增益件" }
+        ],
+        synth: ["牌堆为核心件，其余扑克牌靠商店逐步收集"],
+        synergy: "扑克牌系是<b>组合收益</b>：单张牌不强，凑齐花色/数量后才产生质变，因此看到扑克牌要贪。"
+      },
+      {
+        name: "减益反弹流", desc: "用「反弹！」与诅咒类装备把对手的减益弹回去，克制中毒与冰冷阵容。",
+        core: [
+          { n: "反弹！", r: "史诗", e: "把受到的减益反弹给对手，反制型核心" },
+          { n: "诅咒匕首", r: "子职业", e: "魔剑士招牌，攻击附带诅咒减益" },
+          { n: "不愈法杖", r: "史诗", e: "压制对手治疗，废掉吸血/恢复流" },
+          { n: "贴贴女士", r: "史诗", e: "提供减益联动与骚扰" },
+          { n: "大火龙", r: "传说", e: "火系召唤件，补充直伤" }
+        ],
+        synth: ["诅咒匕首 ← 匕首 + 诅咒材料"],
+        synergy: "这是<b>针对型</b>流派：对付中毒/冰冷/吸血阵容收益极高，但面对纯直伤流会偏弱，适合中后期按对手阵容转型。"
+      }
+    ]
+  },
+
+  /* ------------------------------------------------------------------
+     3. 火焰魔导士 Pyromancer —— 狂热(Heat) / 火
+     数据：Wiki 火焰魔导士页（专属物品 + 龙蛋系）
+     ------------------------------------------------------------------ */
+  {
+    id: "pyromancer", name: "火焰魔导士", en: "Pyromancer", emoji: "🔥", color: "#e8734c",
+    role: "狂热 · 火焰 · 龙蛋",
+    desc: "狂热是这套职业的专属资源，火系装备越打越快，龙蛋负责后期质变。",
+    tags: ["狂热", "燃烧", "龙蛋", "爆发"],
+    builds: [
+      {
+        name: "燃烧流", desc: "红辣椒 + 火焰把狂热与燃烧堆满，速攻压制，典型的快攻形态。",
+        core: [
+          { n: "红辣椒", r: "普通", e: "狂热来源的廉价核心件，早期必拿" },
+          { n: "火焰", r: "罕见", e: "燃烧流基础件，提供持续火伤" },
+          { n: "炽热匕首", r: "史诗", e: "高攻速火系武器，配狂热提速质变" },
+          { n: "炽热巨剑", r: "传说", e: "火系主武器，单次高额火伤" },
+          { n: "炽热长矛", r: "史诗", e: "远程火系武器，补足射程" }
+        ],
+        synth: ["炽热武器系由火系底材 + 火种合成"],
+        synergy: "狂热层数会<b>反过来加快所有火系装备的触发</b>，所以这是一条正反馈曲线：越早堆狂热，成型速度越快。"
+      },
+      {
+        name: "龙蛋孵化流", desc: "三色龙蛋 + 龙铭珠，前期投资后期收获，成型后单件强度极高。",
+        core: [
+          { n: "紫水晶龙蛋", r: "史诗", e: "龙蛋系核心，孵化后提供强力单位/增益" },
+          { n: "翡翠龙蛋", r: "史诗", e: "龙蛋系分支，偏向续航与防御" },
+          { n: "蓝宝石龙蛋", r: "史诗", e: "龙蛋系分支，偏向魔法输出" },
+          { n: "龙铭珠", r: "史诗", e: "强化龙系物品的核心配饰" },
+          { n: "黑晶龙", r: "传说", e: "龙系终局单位，龙蛋孵化路线的终点" }
+        ],
+        synth: ["龙蛋孵化 → 幼龙 → 龙系单位（三色路线不同）"],
+        synergy: "龙蛋需要<b>时间成本</b>：前期偏弱、后期极强，因此这条流派要用火焰/狂热件撑过前期。"
+      },
+      {
+        name: "凤凰重生流", desc: "凤凰 + 怒火凤凰，死而复生的容错体系，越接近团灭收益越高。",
+        core: [
+          { n: "凤凰", r: "史诗", e: "重生系核心，提供第二条命" },
+          { n: "怒火凤凰", r: "传说", e: "凤凰系终局件，重生后爆发大幅提升" },
+          { n: "魔法卷轴：冰霜箭", r: "史诗", e: "卷轴系补充远程控制与直伤" },
+          { n: "翡翠龙蛋", r: "史诗", e: "提供额外续航，配合重生拖长战线" },
+          { n: "彩虹终极圆圆浓稠黏黏", r: "神级", e: "神级合成件，全面提升火系强度" }
+        ],
+        synth: ["怒火凤凰 ← 凤凰 + 火系强化件", "彩虹终极圆圆浓稠黏黏 ← 系列合成终点"],
+        synergy: "重生体系的强度来自<b>「被打死那一瞬间」</b>，需要搭配大量恢复/护盾来确保复活后能立刻反打。"
+      },
+      {
+        name: "狂热机关流", desc: "用狂热驱动一整套低冷却装备，走「数量换质量」的机关枪路线。",
+        core: [
+          { n: "龙铭珠", r: "史诗", e: "狂热与龙系双收益，机关流启动件" },
+          { n: "炽热长矛", r: "史诗", e: "低冷却远程，狂热提速后频率质变" },
+          { n: "炽热匕首", r: "史诗", e: "低冷却近战，机关流主力" },
+          { n: "红辣椒", r: "普通", e: "持续供给狂热层数" },
+          { n: "火坑", r: "初始包", e: "初始背包自带，前期狂热来源" }
+        ],
+        synth: ["献祭之碗 / 火坑 为初始背包三选一"],
+        synergy: "狂热机关流<b>不看单件强度看总触发次数</b>，因此要优先拿「触发速度快 X%」的配饰而非高伤单件。"
+      }
+    ]
+  },
+
+  /* ------------------------------------------------------------------
+     4. 狂战士 Berserker —— 锻造 / 狂战士之怒
+     数据：Wiki 狂战士页（专属物品 + 合成 + 符文/狼崽系）
+     ------------------------------------------------------------------ */
+  {
+    id: "berserker", name: "狂战士", en: "Berserker", emoji: "🪓", color: "#e8b64c",
+    role: "锻造 · 愤怒 · 狼群",
+    desc: "靠锻造升级装备、用愤怒与符文放大输出，狼崽宠物是最好用的前排。",
+    tags: ["暴击", "符文", "宠物", "锻造"],
+    builds: [
+      {
+        name: "狼群宠物流", desc: "狼崽 + 狼印记 + 萨满面具，三只狼崽吃满增益后是极强的持续输出。",
+        core: [
+          { n: "勇敢狼崽", r: "普通", e: "狼群基础单位，提供前排与输出" },
+          { n: "睿智狼崽", r: "罕见", e: "狼崽分支，偏向增益与辅助" },
+          { n: "全能狼崽", r: "史诗", e: "狼崽最强形态，全面属性提升" },
+          { n: "狼印记", r: "子职业", e: "头狼招牌，全体狼崽强化" },
+          { n: "萨满面具", r: "子职业", e: "萨满招牌，提供群体增益" }
+        ],
+        synth: ["护甲勇敢狼崽 ← 勇敢狼崽 + 护甲件", "护甲全能狼崽 ← 全能狼崽 + 护甲件"],
+        synergy: "狼崽之间是<b>群体增益</b>关系：场上狼越多，每只吃到的加成越高，所以优先「铺数量」再考虑升级单只。"
+      },
+      {
+        name: "符文暴击流", desc: "獾/大象/老虎/猎鹰四系符文堆属性，配合战斧打出高额暴击。",
+        core: [
+          { n: "战斧", r: "史诗", e: "主力武器，暴击收益极高" },
+          { n: "獾符文", r: "史诗", e: "符文系核心，提供属性增益" },
+          { n: "老虎符文", r: "史诗", e: "偏向攻击强度的符文" },
+          { n: "大象符文", r: "史诗", e: "偏向生存与耐力的符文" },
+          { n: "猎鹰符文", r: "史诗", e: "偏向攻速/命中的符文" },
+          { n: "铜指虎", r: "子职业", e: "战士招牌，近战额外收益" }
+        ],
+        synth: ["钢之精华 ← 符文强化材料", "强化磨刀石 ← 磨刀石 + 强化材料"],
+        synergy: "符文流的收益在于<b>属性相乘</b>：四系符文分别加成不同维度，比单一堆一种属性收益更高。"
+      },
+      {
+        name: "锻造流（铁匠）", desc: "铁砧负责把低阶装备锻造成高阶件，是全场最稳定的成长型流派。",
+        kind: "sub",
+        core: [
+          { n: "铁砧", r: "子职业", e: "铁匠招牌，提供锻造能力" },
+          { n: "强化磨刀石", r: "史诗", e: "武器强化核心，持续提升伤害" },
+          { n: "钢之精华", r: "传说", e: "高阶锻造材料，用于质变装备" },
+          { n: "装甲巨龙", r: "传说", e: "锻造系终局单位，坦度与输出兼备" },
+          { n: "尖刺项圈", r: "罕见", e: "反伤配饰，配合高护甲收益高" }
+        ],
+        synth: ["护甲系狼崽 ← 狼崽 + 护甲", "装甲巨龙 ← 锻造系合成终点"],
+        synergy: "锻造流的强度是<b>线性累积</b>的：打得越久、锻造次数越多越强，因此要搭配高护甲/减伤撑住前期。"
+      },
+      {
+        name: "酋长图腾流", desc: "鹿木守护 + 石符文走图腾增益路线，主打全队强化。",
+        kind: "sub",
+        core: [
+          { n: "鹿木守护", r: "子职业", e: "酋长招牌，提供图腾类增益" },
+          { n: "大象符文", r: "史诗", e: "提升全队生存" },
+          { n: "萨满面具", r: "子职业", e: "群体增益放大器" },
+          { n: "奶酪", r: "普通", e: "廉价食物，提供早期耐力续航" },
+          { n: "尖刺项圈", r: "罕见", e: "反伤，配合图腾坦度" }
+        ],
+        synth: ["鹿木守护 ← 酋长系解锁"],
+        synergy: "图腾流<b>输出靠队友</b>，自己偏辅助，所以需要狼崽或高伤武器作为主要伤害来源。"
+      }
+    ]
+  },
+
+  /* ------------------------------------------------------------------
+     5. 魔法师 Mage —— 魔法 / 增益
+     数据：Wiki 魔法师页（专属物品：棋盘棋子、幽灵伙伴、拼图背包、圣典）
+     ------------------------------------------------------------------ */
+  {
+    id: "mage", name: "魔法师", en: "Mage", emoji: "🔮", color: "#4cc7d8",
+    role: "魔法 · 增益 · 棋盘",
+    desc: "正式版新增职业，玩法分裂成三条线：棋子棋盘、幽灵伙伴、拼图背包。",
+    tags: ["魔法", "棋子", "幽灵伙伴", "冰霜"],
+    builds: [
+      {
+        name: "棋子棋盘流", desc: "棋盘让黑白棋自动对弈，每吃一子就触发一个强力效果，滚雪球能力极强。",
+        core: [
+          { n: "棋盘", r: "罕见", e: "流派引擎：棋子自动对弈，每 0.9s 走一回合" },
+          { n: "黑色国王", r: "神级", e: "吃子即给武器提速，清除对手增益" },
+          { n: "黑色皇后", r: "传说", e: "吃子偷取增益，被吃则眩晕对手 1.3s" },
+          { n: "黑色主教", r: "罕见", e: "吃子施加 5 层随机减益，被吃削弱对手回复" },
+          { n: "黑色骑士", r: "罕见", e: "吃子获得吸血，被吃削减对手耐力" },
+          { n: "黑色城堡", r: "史诗", e: "吃子获得尖刺，被吃提升暴击率" },
+          { n: "黑色士兵", r: "普通", e: "廉价棋子，铺场与喂子用" }
+        ],
+        synth: ["棋盘购买时附赠黑/白士兵各一枚", "棋子靠商店出售收集，逐步替换为高阶子"],
+        synergy: "棋子流的核心是<b>「谁吃谁」</b>：黑色棋子的「吃子收益」与「被吃收益」都很强，所以数量与质量都要堆，棋盘则是让对弈自动跑起来的关键。"
+      },
+      {
+        name: "幽灵伙伴流", desc: "幽灵獾 / 幽灵猫 / 幽灵猫头鹰三选一（只能带 1 只），把增益复制与幸运拉满。",
+        core: [
+          { n: "幽灵猫", r: "传说", e: "星星物品 +25% 暴击，并把魔法转成幸运与充能" },
+          { n: "幽灵獾", r: "传说", e: "把魔法转为最大生命值，越打越肉" },
+          { n: "幽灵猫头鹰", r: "传说", e: "消耗魔法回魔，17% 几率复制获得的增益" },
+          { n: "魔法杯糕", r: "史诗", e: "增益与恢复联动件（自然魔法卷轴越多越快）" },
+          { n: "光之圣典", r: "神级", e: "魔法转恢复，卷轴越多触发越快" }
+        ],
+        synth: ["幽灵动物伙伴只能拥有 1 只，其余位置留给卷轴与增益件"],
+        synergy: "幽灵伙伴是<b>单点放大器</b>：它只放大你已经有的增益/幸运，因此要先铺满增益来源，再决定带哪一只。"
+      },
+      {
+        name: "拼图背包流", desc: "四种拼图背包各加 4 格并附带不同的复制/增幅效果，属于后期质变流派。",
+        core: [
+          { n: "改良的拼图背包", r: "罕见", e: "20% 几率复制获得的增益效果" },
+          { n: "能量拼图背包", r: "传说", e: "消耗增益时返还 25%，永久续航" },
+          { n: "耐力拼图背包", r: "神级", e: "背包内效果持续施加 +30%" },
+          { n: "爱的拼图背包", r: "普通", e: "提升生命恢复，开战 +7 最大生命" },
+          { n: "毁坏的拼图背包", r: "史诗", e: "25% 几率复制施加的减益效果" }
+        ],
+        synth: ["四个拼图背包各自独立，2 个时差距拉近 30% 触发速度"],
+        synergy: "拼图背包的本质是<b>放大的背包格</b>：效果取决于你往里塞了什么，所以它适合作为第二流派挂在别的核心之上。"
+      },
+      {
+        name: "冰霜卷轴流", desc: "芙莉莲的冰魔法手册 + 卷轴体系，靠冰冷层数把对手攻速拖垮。",
+        core: [
+          { n: "芙莉莲的冰魔法手册", r: "传说", e: "每 2.8s 施加 2 层冰冷，卷轴越多越快" },
+          { n: "魔法卷轴：重生", r: "罕见", e: "魔法转耐力，支撑高频卷轴触发" },
+          { n: "魔法杯糕", r: "史诗", e: "冰系增益与恢复联动" },
+          { n: "幽灵猫头鹰", r: "传说", e: "补充魔法循环，避免卷轴断档" },
+          { n: "光之圣典", r: "神级", e: "提供稳定恢复，拖住战线" }
+        ],
+        synth: ["卷轴系装备按「同属性卷轴算 2 次」的规则互相加速"],
+        synergy: "冰冷是一条<b>减速曲线</b>：层数越高对手触发越慢，配合自己高频触发就能形成速度差碾压。"
+      }
+    ]
+  },
+
+  /* ------------------------------------------------------------------
+     6. 冒险家 Adventurer —— 幸运 / 通用物品 / 细绳
+     数据：Wiki 冒险家页（专属物品：西兰花系、魔法戒指、宝藏箱、细绳；子职业表）
+     ------------------------------------------------------------------ */
+  {
+    id: "adventurer", name: "冒险家", en: "Adventurer", emoji: "🧭", color: "#57d38c",
+    role: "幸运 · 通用物品 · 宝藏",
+    desc: "能用多个职业的物品，靠细绳与通用件拼装，是自由度最高、也最吃理解的职业。",
+    tags: ["幸运", "自然", "宝藏", "混合"],
+    builds: [
+      {
+        name: "幸运西兰花流", desc: "西兰花系把幸运堆到阈值，5 点幸运后额外产出恢复层，越滚越强。",
+        core: [
+          { n: "西兰花", r: "罕见", e: "每 6s 给 2 点幸运；≥5 幸运额外给 2 层恢复" },
+          { n: "西兰花树", r: "神级", e: "每 6s 给 3 点幸运，≥5 幸运额外 3 层恢复" },
+          { n: "西兰花黏黏", r: "史诗", e: "星星物品激活 6 次后给幸运与恢复" },
+          { n: "魔法戒指", r: "传说", e: "随机 2 个强力增益，幸运/恢复/尖刺/魔法皆可" },
+          { n: "大蒜", r: "普通", e: "早期食物，提供耐力与恢复" }
+        ],
+        synth: ["西兰花黏黏 ← 西兰花 + 黏黏材料", "西兰花树 ← 西兰花系合成终点"],
+        synergy: "核心是<b>幸运阈值</b>：装备描述里的「如果你至少有 5 点幸运」是硬门槛，凑不到这个数收益会腰斩。"
+      },
+      {
+        name: "宝藏考古流", desc: "宝藏箱开出 10 金币价值物品，软呢帽提升寻宝几率，属于高风险高回报的赌博流。",
+        kind: "sub",
+        core: [
+          { n: "宝藏箱", r: "史诗", e: "购买时用价值 10 金币的物品替换，可能含宝藏" },
+          { n: "软呢帽", r: "子职业", e: "考古学家招牌，宝藏几率 +60%、多带 3 件宝藏" },
+          { n: "魔法戒指", r: "传说", e: "泛用强力配饰，宝藏流同样吃满" },
+          { n: "细绳", r: "普通", e: "通用物品越多，越容易触发 +2 最大生命" },
+          { n: "超长矛", r: "史诗", e: "空背包格越多越强，和宝藏流的高格数相性极好" }
+        ],
+        synth: ["宝藏箱自身即为获取高价值物品的入口"],
+        synergy: "考古流的方差很大，但<b>宝藏本身价值高</b>，适合在早期就吃到金币优势的局转进来。"
+      },
+      {
+        name: "细绳通用流", desc: "细绳 + 一堆钻石通用物品，把每一件通用件都变成血上限，走耐久消耗。",
+        core: [
+          { n: "细绳", r: "普通", e: "星星物品激活时 20% 几率 +2 最大生命，通用物品越多几率越高" },
+          { n: "魔法戒指", r: "传说", e: "提供稳定增益与幸运" },
+          { n: "宝藏箱", r: "史诗", e: "补充高价值物品" },
+          { n: "大蒜", r: "普通", e: "廉价的自然通用件" },
+          { n: "西兰花", r: "罕见", e: "提供幸运与恢复，通用件之一" }
+        ],
+        synth: ["细绳系没有强制合成，靠堆通用物品数量提升触发概率"],
+        synergy: "这条流派是<b>纯粹的期望值叠加</b>：单次触发只 +2 血，但通用件越多触发越频繁，中后期血量优势非常明显。"
+      },
+      {
+        name: "武器大师混合流", desc: "水银元素把近战/远程都变成护盾，是混合武器流的最佳搭档。",
+        kind: "sub",
+        core: [
+          { n: "水银元素", r: "子职业", e: "武器大师招牌：造成伤害的 50% 转为护盾" },
+          { n: "回旋镖", r: "罕见", e: "远程武器，50% 几率偷取对手一层增益" },
+          { n: "匕首回旋镖", r: "史诗", e: "回旋镖上位，70% 偷取且眩晕时额外攻击" },
+          { n: "大得离谱的荆棘剑", r: "神级", e: "消耗恢复换吸血与尖刺，尖刺/吸血越高伤害越高" },
+          { n: "超长矛", r: "史诗", e: "空背包格越多穿透护盾越高" }
+        ],
+        synth: ["匕首回旋镖 ← 回旋镖 + 匕首", "大得离谱的荆棘剑 ← 荆棘剑系合成终点"],
+        synergy: "武器大师把<b>伤害直接转护盾</b>，所以攻速越高越坦；配合尖刺与吸血可以做到「越打越硬、越硬越能打」。"
+      }
+    ]
+  },
+
+  /* ------------------------------------------------------------------
+     7. 工程师 Engineer —— 电荷 / 魔法科技
+     数据：Wiki 工程师页（2026-03-27 / 1.1.0 新增职业；专属物品 + 合成）
+     ------------------------------------------------------------------ */
+  {
+    id: "engineer", name: "工程师", en: "Engineer", emoji: "⚙️", color: "#4cc7d8",
+    role: "电荷 · 魔法科技 · 护盾",
+    desc: "1.1.0 新增职业，用「电荷」在背包格间游走给物品提速，是操作感最强的职业。",
+    tags: ["电荷", "护盾", "魔法科技", "吸血"],
+    builds: [
+      {
+        name: "电荷触发流", desc: "电池发射电荷，电荷移动到哪格，哪格的物品就触发更快，是工程师的招牌节奏。",
+        core: [
+          { n: "电池", r: "普通", e: "战斗开始时发射电荷，每 2s 移动一格；格上物品 +10% 触发速度" },
+          { n: "电荷分裂器", r: "史诗", e: "获得电荷时额外发射 2 个，并把幸运/护盾一起拉起来" },
+          { n: "齿轮", r: "罕见", e: "按星星打造物品数量提供护盾，是电荷的稳定搭档" },
+          { n: "线圈", r: "史诗", e: "获得电荷时偷取 2 层增益，越滚越强" },
+          { n: "电阻", r: "罕见", e: "狂热不足时补狂热，保证循环不断档" }
+        ],
+        synth: ["电荷分裂器为核心质变件，优先吃电荷触发次数"],
+        synergy: "电荷流的关键是<b>把最强的那几件装备摆在电荷路径上</b>：电荷每移动一格都会换格，所以格子排布本身就是输出的一部分。"
+      },
+      {
+        name: "魔像护盾流", desc: "自动魔像 + 魔工护甲，靠大量护盾与减伤走「打不穿」的坦克路线。",
+        core: [
+          { n: "自动魔像", r: "史诗", e: "命中消耗魔法造成致盲/眩晕并净化减益；血低于 70% 获得 200 护盾" },
+          { n: "魔工护甲", r: "神级", e: "开战 65 护盾，每 2.2s 净化并叠护盾" },
+          { n: "齿轮", r: "罕见", e: "按星星打造物品数量叠护盾" },
+          { n: "奥术长靴", r: "传说", e: "血低于 70% 换幸运/充能/30 护盾并提速" },
+          { n: "法力香蕉", r: "罕见", e: "魔法换生命与耐力，维持循环" }
+        ],
+        synth: ["奥术长靴 ← 鞋子 + 魔法材料", "自动魔像 ← 魔像系合成", "魔工护甲 ← 护甲系合成终点"],
+        synergy: "护盾流的收益是<b>乘法</b>的：护盾量 × 减伤覆盖率 × 净化能力，三者都要有，缺一项就会被穿透流打穿。"
+      },
+      {
+        name: "魔法科技流", desc: "闪电法杖 + 电荷，把魔法换成高频雷击，这是工程师最直接的输出形态。",
+        core: [
+          { n: "闪电法杖", r: "传说", e: "攻击消耗魔法换伤害，每 3 次攻击发射电荷" },
+          { n: "电池", r: "普通", e: "电荷来源，给法杖提速" },
+          { n: "电荷分裂器", r: "史诗", e: "制造大量电荷，放大法杖收益" },
+          { n: "线圈", r: "史诗", e: "偷取增益补充输出与生存" },
+          { n: "能量拼图背包（跨职业）", r: "可选", e: "若混搭魔法师，可用拼图背包放大魔法循环" }
+        ],
+        synth: ["闪电法杖 ← 法杖 + 魔法科技材料", "电荷武器在电荷格上额外 +6 伤害"],
+        synergy: "电荷格对武器是<b>直接加伤</b>（+6，每移动一格再 +2），所以法杖要尽量停在电荷路径上。"
+      },
+      {
+        name: "电荷吸血流", desc: "机械蝙蝠 + 幸运，把电荷变成吸血引擎，是保命能力最强的一条线。",
+        core: [
+          { n: "机械蝙蝠", r: "传说", e: "每 3s 换吸血；幸运≥10 时额外消耗幸运换更多吸血" },
+          { n: "电池", r: "普通", e: "电荷来源，触发蝙蝠的电荷收益（星星物品 +22% 吸血）" },
+          { n: "线圈", r: "史诗", e: "偷取增益，配合幸运堆叠" },
+          { n: "齿轮", r: "罕见", e: "提供护盾，保证吸血期间不被秒" },
+          { n: "吐司", r: "罕见", e: "耐力低于 2.5 时回复耐力，防止断档" }
+        ],
+        synth: ["机械蝙蝠为核心件，靠电荷触发反复提供吸血"],
+        synergy: "蝙蝠同时吃<b>幸运与电荷</b>两个资源，所以这条流派要同时堆幸运来源（跨职业通用件也行）和电荷发生器。"
+      }
+    ]
+  }
+];
+
+/* ------------------------------------------------------------------
+   通用物品池（wiki「通用」页 165 件，稀有度照抄官方表）
+   分组 = wiki 官方「物品类型」列；分组标题会渲染成 .pool-sec-title
+   说明：官方把 治疗草药 / 海象尖牙 / 磨刀石 / 五种宝石 / 煤炭 归在
+   「配饰」「宝石」类型下，这里按用途挪到「材料」组，方便商店勾选。
+   ------------------------------------------------------------------ */
+const COMMON_GROUPS = [
+  { id: "mat", title: "材料 · 合成素材", items: [
+    { n: "治疗草药", r: "普通" }, { n: "海象尖牙", r: "普通" },
+    { n: "磨刀石", r: "普通" }, { n: "一坨煤炭", r: "普通" },
+    { n: "燃烧煤炭", r: "罕见" }, { n: "腐败水晶", r: "史诗" },
+    { n: "紫水晶", r: "史诗" }, { n: "翡翠", r: "史诗" },
+    { n: "红宝石", r: "史诗" }, { n: "蓝宝石", r: "史诗" },
+    { n: "黄宝石", r: "史诗" }
+  ]},
+  { id: "food", title: "食物", items: [
+    { n: "香蕉", r: "普通" }, { n: "大蒜", r: "普通" },
+    { n: "蓝莓", r: "罕见" }, { n: "菠萝", r: "传说" },
+    { n: "姜饼杰瑞", r: "特别" }
+  ]},
+  { id: "weapon", title: "武器", items: [
+    { n: "石头", r: "普通" }, { n: "木剑", r: "普通" },
+    { n: "扫把", r: "普通" }, { n: "平底锅", r: "普通" },
+    { n: "匕首", r: "罕见" }, { n: "锤子", r: "罕见" },
+    { n: "长矛", r: "罕见" }, { n: "铲铲", r: "罕见" },
+    { n: "火把", r: "罕见" }, { n: "法杖", r: "史诗" },
+    { n: "勇者之剑", r: "史诗" }, { n: "吸血匕首", r: "传说" },
+    { n: "荷包蛋圣锅", r: "传说" }, { n: "猎鹰战刃", r: "传说" },
+    { n: "臭臭牙签", r: "传说" }, { n: "腐败熊猫之锅", r: "传说" },
+    { n: "锯刃", r: "传说" }, { n: "剧毒蛇杖", r: "传说" },
+    { n: "雪杖", r: "传说" }, { n: "十字剑", r: "神级" },
+    { n: "酷炫西洋剑", r: "神级" }, { n: "神圣长矛", r: "神级" },
+    { n: "武士刀", r: "神级" }, { n: "光剑", r: "神级" },
+    { n: "荆棘之花", r: "神级" }, { n: "遗迹石：寒冷", r: "特别" },
+    { n: "遗迹石：死亡", r: "特别" }, { n: "遗迹石：火焰", r: "特别" },
+    { n: "南瓜头", r: "特别" }
+  ]},
+  { id: "shield", title: "盾牌", items: [
+    { n: "木盾", r: "普通" }, { n: "尖刺盾牌", r: "罕见" },
+    { n: "冰霜盾牌", r: "史诗" }, { n: "勇气盾牌", r: "传说" },
+    { n: "月光盾", r: "神级" }, { n: "松林守护者", r: "神级" }
+  ]},
+  { id: "armor", title: "护甲", items: [
+    { n: "皮制护甲", r: "罕见" }, { n: "冰霜护甲", r: "史诗" },
+    { n: "神圣护甲", r: "传说" }, { n: "石制护甲", r: "传说" },
+    { n: "吸血护甲", r: "传说" }, { n: "腐败护甲", r: "神级" },
+    { n: "黄金护甲", r: "神级" }, { n: "月光护甲", r: "神级" }
+  ]},
+  { id: "helmet", title: "头盔", items: [
+    { n: "坚韧头盔", r: "史诗" }, { n: "腐败头盔", r: "传说" },
+    { n: "石制头盔", r: "传说" }, { n: "辉耀王冠", r: "神级" },
+    { n: "国王王冠", r: "神级" }
+  ]},
+  { id: "glove", title: "手套", items: [
+    { n: "迅捷手套", r: "罕见" }, { n: "力量手套", r: "传说" },
+    { n: "吸血手套", r: "神级" }
+  ]},
+  { id: "boots", title: "鞋子", items: [
+    { n: "皮质靴", r: "史诗" }, { n: "石靴", r: "传说" },
+    { n: "飞鞋", r: "神级" }
+  ]},
+  { id: "acc", title: "配饰", items: [
+    { n: "存钱罐", r: "普通" }, { n: "闪光蜗牛壳", r: "普通" },
+    { n: "一口袋沙子", r: "普通" }, { n: "一袋石头", r: "罕见" },
+    { n: "宝石盒", r: "罕见" }, { n: "一堆金币", r: "罕见" },
+    { n: "会员卡", r: "罕见" }, { n: "未知护符", r: "罕见" },
+    { n: "炼金护符", r: "罕见" }, { n: "黑暗护符", r: "罕见" },
+    { n: "能量护符", r: "罕见" }, { n: "食物护符", r: "罕见" },
+    { n: "财富护符", r: "罕见" }, { n: "生命护符", r: "罕见" },
+    { n: "光明护符", r: "罕见" }, { n: "自然护符", r: "罕见" },
+    { n: "笛子", r: "史诗" }, { n: "魔法球", r: "史诗" },
+    { n: "白金会员卡", r: "史诗" }, { n: "钢之护符", r: "传说" },
+    { n: "血色护符", r: "传说" }, { n: "阿拉丁神灯", r: "神级" },
+    { n: "号角", r: "神级" }, { n: "齿轮徽章", r: "特别" },
+    { n: "水晶之翼", r: "特别" }, { n: "火焰徽章", r: "特别" },
+    { n: "福西法超级会员", r: "特别" }, { n: "绿叶徽章", r: "特别" },
+    { n: "彩虹徽章", r: "特别" }, { n: "稳定重组器", r: "特别" },
+    { n: "石头徽章", r: "特别" }, { n: "时间扩大器", r: "特别" }
+  ]},
+  { id: "bag", title: "背包", items: [
+    { n: "皮包", r: "普通" }, { n: "腰包", r: "罕见" },
+    { n: "财富之盒", r: "史诗" }, { n: "旅行袋", r: "史诗" },
+    { n: "耐力包", r: "史诗" }, { n: "魔药腰带", r: "传说" },
+    { n: "守护钱包", r: "神级" }, { n: "惊喜袋", r: "特别" }
+  ]},
+  { id: "pet", title: "宠物", items: [
+    { n: "黏宝宝", r: "普通" }, { n: "黏黏", r: "罕见" },
+    { n: "小蜗", r: "罕见" }, { n: "血之黏黏", r: "传说" },
+    { n: "钢之黏黏", r: "传说" }, { n: "歪脖鸟", r: "传说" },
+    { n: "红宝石龙蛋", r: "传说" }, { n: "国王黏黏", r: "神级" },
+    { n: "光之黏黏", r: "神级" }, { n: "极乐小鸟", r: "神级" },
+    { n: "方块黏黏", r: "特别" }, { n: "树懒", r: "特别" },
+    { n: "荆棘元素", r: "特别" }, { n: "不恐怖幽灵", r: "特别" }
+  ]},
+  { id: "potion", title: "魔药", items: [
+    { n: "生命魔药", r: "罕见" }, { n: "魔法魔药", r: "史诗" },
+    { n: "瘟疫烧瓶", r: "史诗" }, { n: "强力生命魔药", r: "史诗" },
+    { n: "英勇魔药", r: "传说" }, { n: "吸血魔药", r: "传说" },
+    { n: "强力英勇魔药", r: "传说" }, { n: "强力硬化魔药", r: "传说" },
+    { n: "神圣魔药", r: "神级" }, { n: "瓶中闪电", r: "特别" }
+  ]},
+  { id: "skill", title: "技能", items: [
+    { n: "背包盛宴", r: "特别" }, { n: "神圣特卖", r: "特别" },
+    { n: "挖呀挖", r: "特别" }, { n: "双重彩虹", r: "特别" },
+    { n: "回响战嚎", r: "特别" }, { n: "附魔武器", r: "特别" },
+    { n: "亡灵庇护", r: "特别" }, { n: "财富之吻", r: "特别" },
+    { n: "全身防护", r: "特别" }, { n: "怪力少女", r: "特别" },
+    { n: "硬木", r: "特别" }, { n: "开怀畅饮", r: "特别" },
+    { n: "投资机会", r: "特别" }, { n: "黏黏派对", r: "特别" },
+    { n: "纯粹加成", r: "特别" }, { n: "珠宝之王", r: "特别" },
+    { n: "刀刀见血", r: "特别" }, { n: "魔法大师", r: "特别" },
+    { n: "更多加成", r: "特别" }, { n: "别着急", r: "特别" },
+    { n: "存钱罐皮纳塔", r: "特别" }, { n: "月亮之力", r: "特别" },
+    { n: "一锤定音", r: "特别" }, { n: "护盾加强", r: "特别" },
+    { n: "铁匠入门指南", r: "特别" }, { n: "兽语大师", r: "特别" },
+    { n: "投石手", r: "特别" }, { n: "超大容量", r: "特别" },
+    { n: "尖刺爆发", r: "特别" }, { n: "时间融化", r: "特别" },
+    { n: "未挖掘潜力", r: "特别" }
+  ]},
+  /* 这几件不是 wiki「通用」清单里的物品（分别是工程师/狂战士/基础素材），
+     但游戏里商店都能见到、且被本页配方引用，所以单独列一组方便勾选 */
+  { id: "extra", title: "其他可选件（非通用清单）", items: [
+    { n: "奶酪", r: "普通" }, { n: "吐司", r: "罕见" },
+    { n: "幸运四叶草", r: "罕见" }, { n: "尖刺项圈", r: "罕见" },
+    { n: "铁剑", r: "普通" }, { n: "钉子", r: "普通" }
+  ]}
+];
+
+/* 兼容旧代码：拍平后的通用物品数组（wiki 通用 165 件 + 6 件其他可选件 = 171）
+   统计、逐件遍历仍按它算 */
+const COMMON_POOL = (() => {
+  const seen = new Map();
+  COMMON_GROUPS.forEach(g => g.items.forEach(it => { if (!seen.has(it.n)) seen.set(it.n, it); }));
+  return [...seen.values()];
+})();
+
+/** 通用物品的名字 → 稀有度 索引（tier 计算时优先于 MID_RARITY 兜底表） */
+const COMMON_RARITY = (() => {
+  const map = {};
+  COMMON_GROUPS.forEach(g => g.items.forEach(it => { if (it.r) map[it.n] = it.r; }));
+  return map;
+})();
+
+/* ==================================================================
+   RECIPES —— 装备合成配方表（核心件 → 所需材料）
+   ------------------------------------------------------------------
+   结构：{ "成品名": [{n:"材料名", c:数量}, ...] }
+     · 材料名使用与 BUILDS 完全相同的写法，检测时同样走 norm() 归一化
+     · 支持同名材料多份（如 短弓×2 → 长弓）
+     · 只收录「可在商店用低阶件合成」的成品；商店直购件不写，留空数组即可
+     · 配方按社区整理，个别版本可能有差异，以游戏内为准
+   覆盖率：见页面「合成面板」与页脚说明；核心件中无配方的会显示为「直接购买件」
+   说明：带「已核对」注释的是本可确认的条目，其余为社区整理的常见配方，个别版本可能有差异
+   ================================================================== */
+const RECIPES = {
+  /* ---------- 通用材料（两个低阶件 → 一个进阶件） ---------- */
+  "磨刀石": [{ n:"石头", c:2, r:"普通" }],
+  "尖刺项圈": [{ n:"皮甲", c:1, r:"罕见" }, { n:"钉子", c:2, r:"普通" }],
+  "大蒜": [{ n:"草药", c:2, r:"罕见" }],
+  "奶酪": [{ n:"牛奶", c:2, r:"普通" }],
+  "吐司": [{ n:"面包", c:1, r:"普通" }, { n:"奶酪", c:1, r:"罕见" }],
+  "魔法药水": [{ n:"蓝莓", c:2, r:"普通" }, { n:"瓶子", c:1, r:"罕见" }],
+  "铁剑": [{ n:"木剑", c:1, r:"普通" }, { n:"铁锭", c:2, r:"普通" }],
+  "幸运四叶草": [{ n:"三叶草", c:3, r:"史诗" }],
+  "皮包": [{ n:"兽皮", c:2, r:"普通" }],
+  /* ---------- 魔药（wiki 物品页「合成配方」逐条核对） ---------- */
+  "强力生命魔药": [{ n:"生命魔药", c:1, r:"罕见" }, { n:"治疗草药", c:1, r:"普通" }],
+  "魔法魔药": [{ n:"生命魔药", c:1, r:"罕见" }, { n:"蓝莓", c:1, r:"罕见" }],
+  "吸血魔药": [{ n:"强力生命魔药", c:1, r:"史诗" }, { n:"血色护符", c:1, r:"传说" }],
+  /* ---------- 通用 / 游侠 ---------- */
+  "长弓": [{ n:"短弓", c:2, r:"罕见" }],
+  "尖牙弓": [{ n:"长弓", c:1, r:"史诗" }, { n:"海象尖牙", c:1, r:"史诗" }],
+  "尖牙短弓": [{ n:"短弓", c:1, r:"罕见" }, { n:"海象尖牙", c:1, r:"史诗" }],
+  "颠茄剧毒弓": [{ n:"长弓", c:1, r:"史诗" }, { n:"颠茄", c:2, r:"史诗" }, { n:"毒蘑菇", c:1, r:"罕见" }],
+  "颠茄剧毒短弓": [{ n:"短弓", c:1, r:"罕见" }, { n:"颠茄", c:2, r:"史诗" }, { n:"毒蘑菇", c:1, r:"罕见" }],
+  "松鼠射手": [{ n:"松鼠", c:1, r:"罕见" }, { n:"短弓", c:1, r:"罕见" }, { n:"尖刺项圈", c:1, r:"罕见" }],
+  "白色百合花项圈": [{ n:"橡子颈圈", c:1, r:"传说" }, { n:"白色百合花", c:2, r:"传说" }],
+  "大师雪人": [{ n:"雪球", c:2, r:"史诗" }, { n:"萝卜", c:1, r:"史诗" }, { n:"煤炭", c:1, r:"罕见" }],
+  "强化磨刀石": [{ n:"磨刀石", c:3, r:"史诗" }],
+  "钢之精华": [{ n:"强化磨刀石", c:1, r:"史诗" }, { n:"钢之护符", c:1, r:"传说" }],
+  "生命药水": [{ n:"草药", c:2, r:"罕见" }, { n:"瓶子", c:1, r:"罕见" }],
+  "巨型四叶草": [{ n:"幸运四叶草", c:3, r:"史诗" }],
+  "萝卜": [{ n:"胡萝卜", c:2, r:"普通" }],
+  "雪球": [{ n:"一大团雪", c:2, r:"史诗" }],
+  "煤炭": [{ n:"木头", c:2, r:"普通" }],
+  "鼠鼠": [{ n:"兽皮", c:1, r:"普通" }, { n:"尖牙", c:1, r:"普通" }],
+  "蜘蛛": [{ n:"尖牙", c:1, r:"普通" }, { n:"蜘蛛网", c:1, r:"罕见" }],
+  /* ---------- 收割者 ---------- */
+  "瘟疫烧瓶": [{ n:"瓶子", c:1, r:"罕见" }, { n:"毒蘑菇", c:2, r:"罕见" }],
+  "恶魔烧瓶": [{ n:"瓶子", c:1, r:"罕见" }, { n:"红辣椒", c:2, r:"史诗" }],
+  /* 注：吸血魔药 / 魔法魔药 的配方统一写在上面「魔药（wiki 物品页逐条核对）」块里，
+     这里不再重复定义（对象同名键后者会覆盖前者，会造成 wiki 配方被旧猜测覆盖）。 */
+  "神圣魔药": [{ n:"瓶子", c:1, r:"罕见" }, { n:"白色百合花", c:1, r:"传说" }],
+  "剧毒常春藤": [{ n:"毒蘑菇", c:1, r:"罕见" }, { n:"草药", c:1, r:"罕见" }],
+  "致幻蘑菇": [{ n:"蘑菇", c:1, r:"普通" }, { n:"毒蘑菇", c:1, r:"罕见" }],
+  "大煮锅": [{ n:"空锅", c:1, r:"普通" }, { n:"木头", c:2, r:"普通" }],
+  "蟾蜍": [{ n:"青蛙", c:1, r:"罕见" }, { n:"致幻蘑菇", c:2, r:"史诗" }],
+  "命中小丑": [{ n:"小丑牌", c:1, r:"史诗" }, { n:"匕首", c:1, r:"普通" }],
+  "强力瘟疫烧瓶": [{ n:"瘟疫烧瓶", c:1, r:"史诗" }, { n:"致幻蘑菇", c:2, r:"史诗" }],
+  "强力恶魔烧瓶": [{ n:"恶魔烧瓶", c:1, r:"史诗" }, { n:"大火龙", c:2, r:"神级" }],
+  "强力魔法魔药": [{ n:"魔法魔药", c:1, r:"史诗" }, { n:"魔法水晶", c:2, r:"史诗" }],
+  "强力神圣魔药": [{ n:"神圣魔药", c:1, r:"史诗" }, { n:"白色百合花", c:2, r:"传说" }],
+  "强力吸血魔药": [{ n:"吸血魔药", c:1, r:"传说" }, { n:"大煮锅", c:1, r:"特别" }],
+  "不愈法杖": [{ n:"木剑", c:1, r:"普通" }, { n:"不愈法球", c:1, r:"传说" }],
+  "战镰": [{ n:"匕首", c:1, r:"普通" }, { n:"死神镰刀", c:1, r:"传说" }],
+  "黑暗莲花": [{ n:"黑色莲花", c:1, r:"传说" }, { n:"恶魔烧瓶", c:1, r:"史诗" }],
+  /* ---------- 火焰魔导士 ---------- */
+  "火焰": [{ n:"红辣椒", c:1, r:"史诗" }, { n:"煤炭", c:1, r:"罕见" }],
+  "燃烧煤炭": [{ n:"煤炭", c:1, r:"罕见" }, { n:"火焰", c:1, r:"史诗" }],
+  "炽热匕首": [{ n:"匕首", c:1, r:"普通" }, { n:"火焰", c:2, r:"史诗" }],
+  "炽热长矛": [{ n:"长矛", c:1, r:"罕见" }, { n:"火焰", c:2, r:"史诗" }],
+  "炽热巨剑": [{ n:"巨剑", c:1, r:"罕见" }, { n:"火焰", c:3, r:"史诗" }],
+  "紫水晶幼龙": [{ n:"紫水晶龙蛋", c:1, r:"传说" }, { n:"火焰", c:2, r:"史诗" }],
+  "蓝宝石幼龙": [{ n:"蓝宝石龙蛋", c:1, r:"传说" }, { n:"冰霜", c:2, r:"史诗" }],
+  "翡翠幼龙": [{ n:"翡翠龙蛋", c:1, r:"传说" }, { n:"草药", c:2, r:"罕见" }],
+  "黑晶龙": [{ n:"紫水晶幼龙", c:1, r:"传说" }, { n:"蓝宝石幼龙", c:1, r:"传说" }, { n:"翡翠幼龙", c:1, r:"传说" }],
+  "怒火凤凰": [{ n:"凤凰", c:1, r:"神级" }, { n:"火焰", c:3, r:"史诗" }],
+  "烈焰之鞭": [{ n:"炽热匕首", c:1, r:"史诗" }, { n:"红辣椒", c:2, r:"史诗" }],
+  "烈火之杖": [{ n:"炽热长矛", c:1, r:"史诗" }, { n:"火焰", c:2, r:"史诗" }],
+  "熔岩匕首": [{ n:"炽热匕首", c:1, r:"史诗" }, { n:"黑曜石", c:1, r:"史诗" }],
+  "熔岩长矛": [{ n:"炽热长矛", c:1, r:"史诗" }, { n:"黑曜石", c:2, r:"史诗" }],
+  "熔岩巨剑": [{ n:"炽热巨剑", c:1, r:"史诗" }, { n:"黑曜石", c:3, r:"史诗" }],
+  /* ---------- 狂战士 ---------- */
+  "战斧": [{ n:"斧头", c:1, r:"罕见" }, { n:"铁锭", c:2, r:"普通" }],
+  "铜指虎": [{ n:"铁锭", c:1, r:"普通" }, { n:"皮革", c:2, r:"普通" }],
+  "铁砧": [{ n:"铁锭", c:4, r:"普通" }],
+  "萨满面具": [{ n:"木雕面具", c:1, r:"罕见" }, { n:"羽毛", c:2, r:"普通" }],
+  "狼印记": [{ n:"狼牙", c:2, r:"罕见" }, { n:"兽皮", c:1, r:"普通" }],
+  "獾符文": [{ n:"符文石", c:1, r:"史诗" }, { n:"獾爪", c:2, r:"罕见" }],
+  "老虎符文": [{ n:"符文石", c:1, r:"史诗" }, { n:"虎牙", c:2, r:"罕见" }],
+  "大象符文": [{ n:"符文石", c:1, r:"史诗" }, { n:"象皮", c:2, r:"罕见" }],
+  "猎鹰符文": [{ n:"符文石", c:1, r:"史诗" }, { n:"羽毛", c:3, r:"普通" }],
+  "鹿木守护": [{ n:"鹿角", c:2, r:"罕见" }, { n:"木头", c:2, r:"普通" }],
+  "勇敢狼崽": [{ n:"狼崽", c:1, r:"罕见" }, { n:"尖牙", c:1, r:"普通" }],
+  "睿智狼崽": [{ n:"狼崽", c:1, r:"罕见" }, { n:"骨头", c:1, r:"普通" }],
+  "全能狼崽": [{ n:"狼崽", c:1, r:"罕见" }, { n:"皮甲", c:1, r:"罕见" }],
+  "护甲勇敢狼崽": [{ n:"勇敢狼崽", c:1, r:"罕见" }, { n:"皮甲", c:1, r:"罕见" }],
+  "护甲全能狼崽": [{ n:"全能狼崽", c:1, r:"罕见" }, { n:"皮甲", c:1, r:"罕见" }],
+  "装甲巨龙": [{ n:"龙爪", c:1, r:"神级" }, { n:"龙鳞护甲", c:1, r:"神级" }],
+  "双刃斧": [{ n:"战斧", c:2, r:"罕见" }],
+  "巨龙之爪": [{ n:"龙爪", c:2, r:"神级" }, { n:"尖刺项圈", c:1, r:"罕见" }],
+  "尖刺法杖": [{ n:"木剑", c:1, r:"普通" }, { n:"尖刺项圈", c:1, r:"罕见" }],
+  /* ---------- 魔法师 ---------- */
+  "光之圣典": [{ n:"书", c:1, r:"普通" }, { n:"魔法水晶", c:2, r:"史诗" }],
+  "黑色士兵": [{ n:"木头", c:1, r:"普通" }, { n:"石头", c:1, r:"普通" }],
+  "黑色城堡": [{ n:"石头", c:3, r:"普通" }],
+  "黑色骑士": [{ n:"黑色士兵", c:1, r:"传说" }, { n:"铁锭", c:1, r:"普通" }],
+  "黑色主教": [{ n:"黑色士兵", c:2, r:"传说" }, { n:"魔法水晶", c:1, r:"史诗" }],
+  "黑色皇后": [{ n:"黑色主教", c:1, r:"传说" }, { n:"黑色城堡", c:1, r:"传说" }],
+  "黑色国王": [{ n:"黑色皇后", c:1, r:"传说" }, { n:"黑色骑士", c:1, r:"传说" }],
+  "棋盘": [{ n:"木头", c:4, r:"普通" }, { n:"石头", c:2, r:"普通" }],
+  "彩虹魔棒": [{ n:"光之圣典", c:1, r:"传说" }, { n:"彩虹球", c:2, r:"罕见" }],
+  "失调魔棒": [{ n:"光之圣典", c:1, r:"传说" }, { n:"黑色主教", c:1, r:"传说" }],
+  "霜冻魔镜": [{ n:"魔法卷轴：冰霜箭", c:1, r:"传说" }, { n:"蓝宝石龙蛋", c:1, r:"传说" }],
+  "魔法杯糕": [{ n:"杯糕", c:2, r:"史诗" }, { n:"魔法水晶", c:1, r:"史诗" }],
+  "死亡莲花": [{ n:"黑色莲花", c:1, r:"传说" }, { n:"幽灵猫头鹰", c:1, r:"史诗" }],
+  "幽灵獾": [{ n:"幽灵", c:1, r:"神级" }, { n:"獾", c:1, r:"史诗" }],
+  "幽灵猫": [{ n:"幽灵", c:1, r:"神级" }, { n:"猫咪", c:1, r:"史诗" }],
+  "幽灵猫头鹰": [{ n:"幽灵", c:1, r:"神级" }, { n:"猫头鹰", c:1, r:"史诗" }],
+  /* ---------- 冒险家 / 工程师 ---------- */
+  "西兰花": [{ n:"草药", c:2, r:"罕见" }, { n:"大蒜", c:1, r:"罕见" }],
+  "魔法戒指": [{ n:"宝石", c:1, r:"史诗" }, { n:"铁锭", c:1, r:"普通" }],
+  "细绳": [{ n:"绳子", c:1, r:"普通" }, { n:"皮革", c:1, r:"普通" }],
+  "超长矛": [{ n:"长矛", c:2, r:"罕见" }],
+  "宝藏箱": [{ n:"木头", c:3, r:"普通" }, { n:"铁锭", c:1, r:"普通" }],
+  "软呢帽": [{ n:"布", c:2, r:"普通" }, { n:"羽毛", c:1, r:"普通" }],
+  "水银元素": [{ n:"水银", c:2, r:"罕见" }, { n:"魔法水晶", c:1, r:"史诗" }],
+  "回旋镖": [{ n:"木剑", c:1, r:"普通" }, { n:"石头", c:2, r:"普通" }],
+  "匕首回旋镖": [{ n:"回旋镖", c:1, r:"史诗" }, { n:"匕首", c:2, r:"普通" }],
+  "大得离谱的荆棘剑": [{ n:"荆棘剑", c:1, r:"史诗" }, { n:"尖刺项圈", c:1, r:"罕见" }, { n:"钢之精华", c:1, r:"传说" }],
+  "剑剪刀": [{ n:"宝刀", c:1, r:"传说" }, { n:"剪刀", c:1, r:"普通" }],
+  "西兰花树": [{ n:"西兰花", c:3, r:"史诗" }, { n:"草药", c:2, r:"罕见" }],
+  "高级戒指": [{ n:"魔法戒指", c:2, r:"史诗" }, { n:"宝石", c:1, r:"史诗" }],
+  "黄金立方体": [{ n:"塑料立方体", c:2, r:"史诗" }, { n:"黄金", c:1, r:"传说" }],
+  "机械蝙蝠": [{ n:"蝙蝠", c:1, r:"罕见" }, { n:"齿轮", c:2, r:"史诗" }],
+  "齿轮": [{ n:"铁锭", c:1, r:"普通" }, { n:"钉子", c:1, r:"普通" }],
+  "线圈": [{ n:"铁锭", c:1, r:"普通" }, { n:"铜线", c:2, r:"罕见" }],
+  "电阻": [{ n:"铜线", c:2, r:"罕见" }, { n:"石头", c:1, r:"普通" }],
+  "电池": [{ n:"铁锭", c:1, r:"普通" }, { n:"魔法水晶", c:1, r:"史诗" }],
+  "电荷分裂器": [{ n:"电池", c:2, r:"史诗" }, { n:"线圈", c:2, r:"史诗" }],
+  "奥术长靴": [{ n:"皮革", c:2, r:"普通" }, { n:"魔法水晶", c:1, r:"史诗" }],
+  "法力香蕉": [{ n:"香蕉", c:1, r:"普通" }, { n:"魔法水晶", c:1, r:"史诗" }],
+  "自动魔像": [{ n:"齿轮", c:2, r:"史诗" }, { n:"石头", c:3, r:"普通" }],
+  "闪电法杖": [{ n:"木剑", c:1, r:"普通" }, { n:"电池", c:1, r:"史诗" }, { n:"线圈", c:1, r:"史诗" }],
+  "魔工护甲": [{ n:"皮甲", c:1, r:"罕见" }, { n:"电池", c:2, r:"史诗" }, { n:"电阻", c:1, r:"史诗" }],
+};
+
+
+/**
+ * 把 RECIPES 注入到 BUILDS 的每个核心件上（原地补 recipe 字段）
+ * 这样每个核心件都拥有 recipe: [{n,c}]，没有配方的是空数组，UI 视为「直接购买件」
+ */
+(function injectRecipes(){
+  const byName = new Map(Object.keys(RECIPES).map(k => [normRecipeKey(k), RECIPES[k]]));
+  BUILDS.forEach(c => c.builds.forEach(b => b.core.forEach(it => {
+    it.recipe = byName.get(normRecipeKey(it.n)) || [];
+  })));
+})();
+
+/** 与交互逻辑里的 norm() 同规则（此处先声明一份，避免依赖顺序） */
+function normRecipeKey(s){
+  return String(s || "")
+    .replace(/[\s\u3000]/g, "")
+    .replace(/[，,、;；:：。.！!？?（）()【】\[\]「」『』"'"'·\-_—+]/g, "")
+    .toLowerCase();
+}
+
+/* ==================================================================
+   ↓↓↓  以下为交互逻辑，一般不需要修改  ↓↓↓
+   ================================================================== */
+
+/* ---------- 工具：名称归一化（提升自由输入的匹配率） ---------- */
+/** 去掉空格与常见标点、全角半角统一，便于模糊匹配 */
+function norm(s){
+  return String(s || "")
+    .replace(/[\s\u3000]/g, "")
+    .replace(/[，,、;；:：。.！!？?（）()【】\[\]「」『』"'"'·\-_—+]/g, "")
+    .toLowerCase();
+}
+
+/* ---------- 状态 ---------- */
+const state = {
+  classId: null,       // 当前选中的职业 id
+  owned: [],           // 已持有装备原始名数组
+  ownedNorm: new Set(),// 归一化后的名字集合（用于 O(1) 匹配）
+  phase: 0             // 当前回合阶段（PHASES 下标，默认 0 = 前期 1-3 回合）
+};
+
+/** 当前阶段配置 */
+function curPhase(){ return PHASES[state.phase] || PHASES[0]; }
+
+/* 合成相关状态：按职业保存「已标记为已合成」的装备，切职业不会丢 */
+const craftedByClass = {};   // { 职业id: Set(归一化装备名) }
+
+/** 当前职业已手动标记的合成件集合（只读引用） */
+function craftedSet(){
+  const id = state.classId || "_";
+  if (!craftedByClass[id]) craftedByClass[id] = new Set();
+  return craftedByClass[id];
+}
+
+/* ---------- 合成检测 ---------- */
+/** 配方按归一化名索引（惰性构建，只建一次） */
+let _recipeByNorm = null;
+function recipeOf(name){
+  if (!_recipeByNorm){
+    _recipeByNorm = new Map();
+    Object.keys(RECIPES).forEach(k => _recipeByNorm.set(norm(k), RECIPES[k]));
+  }
+  return _recipeByNorm.get(norm(name)) || null;
+}
+
+/**
+ * 材料是否够：
+ *   1) 直接持有 或 已被标记/判定为已合成 → 足够
+ *   2) 有配方且 depth 未耗尽 → 递归检查配方里每种材料
+ */
+function matsEnough(mats, crafted, depth){
+  if (!mats || !mats.length) return false;                    // 没有配方 → 不算可合成
+  for (const m of mats){
+    const k = norm(m.n);
+    if (state.ownedNorm.has(k) || crafted.has(k)) continue;   // 已有 / 已合成 → 这类材料无忧
+    if (depth <= 0) return false;                             // 没法再往下合成
+    const r = recipeOf(m.n);
+    if (!r) return false;                                     // 底层材料且没持有 → 缺
+    for (let i = 0; i < (m.c || 1); i++){
+      if (!matsEnough(r, crafted, depth - 1)) return false;
+    }
+  }
+  return true;
+}
+
+/** 计算某个核心件在当前职业下的合成信息（null = 直接购买件） */
+function recipeInfoOf(it, crafted, autoCraft){
+  const recipe = it.recipe || [];
+  if (!recipe.length) return null;
+  let ok = 0;
+  const parts = recipe.map(m => {
+    const k = norm(m.n);
+    const have = state.ownedNorm.has(k) || crafted.has(k) || autoCraft.has(k);
+    const enough = have && matsEnough([m], crafted, 3);
+    if (enough) ok++;
+    return { n: m.n, c: m.c || 1, enough };
+  });
+  return { recipe, parts, ok, need: recipe.length, craftable: parts.every(p => p.enough) };
+}
+
+/**
+ * 对当前职业做一遍合成推演（贪婪 + 有界递归）：
+ *   返回 { effective:Set, autoCraft:Set, info:Map(norm名 → recipeInfo) }
+ */
+function computeCraft(){
+  const cls = getClass(state.classId);
+  const empty = { effective: new Set(state.ownedNorm), autoCraft: new Set(), info: new Map() };
+  if (!cls) return empty;
+
+  const crafted = craftedSet();
+  const autoCraft = new Set();        // 材料齐全 → 自动视为「可合成」
+  const cores = new Map();            // 该职业全部核心件（去重）
+  cls.builds.forEach(b => b.core.forEach(it => {
+    const k = norm(it.n);
+    if (!cores.has(k)) cores.set(k, it);
+  }));
+
+  // 最多 4 轮即可稳定（核心件配方深度一般 ≤3）
+  for (let pass = 0; pass < 4; pass++){
+    let grew = false;
+    cores.forEach((it, k) => {
+      if (state.ownedNorm.has(k) || crafted.has(k) || autoCraft.has(k)) return;
+      if (matsEnough(it.recipe, new Set([...crafted, ...autoCraft]), 3)) {
+        autoCraft.add(k); grew = true;
+      }
+    });
+    if (!grew) break;
+  }
+
+  // 组装展示信息
+  const info = new Map();
+  let manualN = 0;
+  cores.forEach((it, k) => {
+    const ri = recipeInfoOf(it, crafted, autoCraft);
+    if (ri){
+      ri.have = state.ownedNorm.has(k);       // 已直接持有
+      ri.crafted = crafted.has(k);            // 已手动标记合成
+      ri.auto = autoCraft.has(k);             // 材料齐 → 可合成
+      ri.name = it.n;
+      if (ri.crafted) manualN++;
+      info.set(k, ri);
+    }
+  });
+
+  const effective = new Set(state.ownedNorm);
+  crafted.forEach(k => effective.add(k));
+  autoCraft.forEach(k => effective.add(k));
+  return { effective, autoCraft, info, crafted, manualN };
+}
+
+/* ==================================================================
+   按回合分阶段的商店推荐（前期 → 中期 → 后期）
+   ------------------------------------------------------------------
+   · tier 体系：普通0 / 罕见1 / 史诗2 / 传说3 / 神级4 / 特别5
+   · 每个流派的「升级路线」= 核心件 + 它们的配方材料，递归展开后按 tier 分成 3 档
+   · 商店推荐按当前阶段过滤：前期只看 tier0-1，中期追加 tier2，后期全开
+   · 排序：低稀有度优先；同一件先推「材料本身」再推「成品」
+   ================================================================== */
+/** 某件物品的 tier：核心件用它的 r，材料用 RECIPES 里的 r，再兜底 MID_RARITY */
+function itemTier(name, it){
+  const k = norm(name);
+  if (it && it.r) return tierOf(it.r);
+  for (const b of (getClass(state.classId) || { builds:[] }).builds)
+    for (const c of b.core) if (norm(c.n) === k) return tierOf(c.r);
+  const rec = recipeOf(name);
+  if (rec && rec[0] && rec[0].r) return tierOf(rec[0].r);
+  const cm = COMMON_RARITY[name];
+  if (cm !== undefined) return tierOf(cm);
+  if (MID_RARITY[name] !== undefined) return tierOf(MID_RARITY[name]);
+  return 1;                                   // 兜底按「罕见」
+}
+/** 取到某件物品的稀有度名（用于颜色 / 文字展示） */
+function itemRarity(name, it){
+  if (it && it.r) return it.r;
+  const cm = COMMON_RARITY[name];
+  if (cm !== undefined) return cm;
+  if (MID_RARITY[name] !== undefined) return MID_RARITY[name];
+  return tierName(itemTier(name, it));
+}
+
+/** 递归收集配方依赖：返回 [{n, tier, rarity, refs:累计引用份数}] */
+function collectDeps(name, depth, map, refs){
+  if (!depth) return map;
+  const rec = recipeOf(name);
+  if (!rec) return map;
+  rec.forEach(m => {
+    const k = norm(m.n);
+    const c = m.c || 1;
+    if (!map.has(k)) map.set(k, { n:m.n, tier:itemTier(m.n), rarity:itemRarity(m.n), refs:0 });
+    map.get(k).refs += (refs || 1) * c;
+    collectDeps(m.n, depth - 1, map, (refs || 1) * c);
+  });
+  return map;
+}
+
+/**
+ * 某个流派的升级路线：三层
+ *   tier0-1 → 阶段一 前期基础件
+ *   tier2   → 阶段二 中期合成件
+ *   tier3+  → 阶段三 后期核心件
+ */
+function buildRoute(build){
+  const coreNames = new Set(build.core.map(it => norm(it.n)));
+  const buckets = [[], [], []];
+  const seen = new Set();
+  const push = (n, it) => {
+    const k = norm(n);
+    if (seen.has(k)) return;
+    seen.add(k);
+    const t = itemTier(n, it);
+    const b = t <= 1 ? 0 : (t === 2 ? 1 : 2);
+    buckets[b].push({ n, it: it || null, tier: t, rarity: itemRarity(n, it) });
+  };
+  build.core.forEach(it => push(it.n, it));
+  // 材料：只收「没直接出现在核心件里」的，避免阶段标签自相矛盾
+  build.core.forEach(it => {
+    const map = collectDeps(it.n, 4, new Map(), 1);
+    map.forEach((d, k) => { if (!coreNames.has(k)) push(d.n); });
+  });
+  buckets.forEach(arr => arr.sort((a, b) => a.tier - b.tier || a.n.localeCompare(b.n, "zh")));
+  return buckets;
+}
+
+/** 升级路线里 tier 最低且有参考价值的一层（用于阶段高亮） */
+function highlightStage(build){
+  const b = buildRoute(build);
+  if (b[0].some(x => x.it)) return 0;
+  if (b[0].length) return 0;
+  if (b[1].length) return 1;
+  return 2;
+}
+
+/**
+ * 商店推荐：当前流派池里「还缺、且符合当前阶段门槛」的物品，按基础度排序
+ *   missing  = 还没持有、也还不能合成
+ *   inPhase  = tier ≤ 当前阶段上限
+ */
+function recommendFor(craft, limit){
+  const cls = getClass(state.classId);
+  if (!cls) return { list:[], owned:[], phase:curPhase(), blocked:0, missing:0 };
+  craft = craft || computeCraft();
+  const phase = curPhase();
+  const map = new Map();
+
+  cls.builds.forEach(b => {
+    b.core.forEach(it => {
+      const k = norm(it.n);
+      const ri = craft.info.get(k);
+      const isMissing = !craft.effective.has(k);                       // 还没有、也不能合成
+      const isCraftable = !!(ri && ri.craftable && !craft.effective.has(k));
+      const coreEntry = {
+        n: it.n, it: it, tier: tierOf(it.r), rarity: it.r || tierName(tierOf(it.r)),
+        refs: 0, isCore: true, craftable: isCraftable,
+        canBuy: isMissing && !isCraftable,                             // 商店直接能买到
+        materials: ri ? ri.recipe.map(m => ({ name:m.n, c:m.c || 1, got:craft.effective.has(norm(m.n)) })) : null
+      };
+      const prev = map.get(k);
+      if (prev) prev.refs++;
+      else map.set(k, coreEntry);
+
+      // 还缺的材料本身：先推荐材料，再推荐成品
+      if (isMissing || isCraftable){
+        collectDeps(it.n, 4, new Map(), 1).forEach((d, dk) => {
+          if (craft.effective.has(dk)) return;                         // 已持有的材料不重复推荐
+          if (!map.has(dk)) map.set(dk, {
+            n:d.n, it:null, tier:d.tier, rarity:d.rarity, refs:0,
+            isCore:false, craftable:false, canBuy:!recipeOf(d.n), materials:null
+          });
+        });
+      }
+    });
+  });
+
+  const missing = [...map.values()].filter(x => !craft.effective.has(norm(x.n)) && !x.craftable);
+  const owned   = [...map.values()].filter(x =>  craft.effective.has(norm(x.n)));
+  const inPhase = missing.filter(x => x.tier <= phase.maxTier);
+  // 阶段门槛挡住的高稀有度件数量（用于给用户解释为什么看不到核心件）
+  const blocked = missing.length - inPhase.length;
+  // 排序：稀有度低优先；同为「材料」的排在「成品」前面；越基础越靠前
+  inPhase.sort((a, b) =>
+    a.tier - b.tier ||
+    (a.isCore ? 1 : 0) - (b.isCore ? 1 : 0) ||
+    b.refs - a.refs ||
+    a.n.localeCompare(b.n, "zh")
+  );
+  return {
+    list: inPhase.slice(0, limit || 12),
+    total: inPhase.length,
+    owned, blocked, phase, missing: missing.length
+  };
+}
+
+/* ---------- DOM 引用 ---------- */
+const $ = (id) => document.getElementById(id);
+const elClassGrid = $("classGrid");
+const elPool = $("pool");
+const elPoolTitle = $("poolTitle");
+const elPoolLabel = $("poolLabel");
+const elPicked = $("pickedBox");
+const elBuildList = $("buildList");
+const elEmpty = $("emptyState");
+const elResultHead = $("resultHead");
+const elTopName = $("topName");
+const elMatchCount = $("matchCount");
+const elSortHint = $("sortHint");   // 排序依据提示（同分规则）
+const elScoreHint = $("scoreHint");
+const elFreeInput = $("freeInput");
+const elCraftList = $("craftList");
+const elCraftSum = $("craftSum");
+const elCraftTitle = $("craftTitle");
+const elRecoPanel = $("recoPanel");
+const elRecoList = $("recoList");
+const elRecoSum = $("recoSum");
+const elRecoHint = $("recoHint");
+const elPhaseNote = $("phaseNote");
+
+/* ---------- 稀有度配色（展示用） ---------- */
+const RARITY_COLOR = {
+  "普通": "#9ba3bb", "罕见": "#57d38c", "史诗": "#4cc7d8",
+  "传说": "#e8b64c", "神级": "#e8734c", "特别": "#a06cf0",
+  "子职业": "#a06cf0", "初始包": "#9ba3bb", "可选": "#9ba3bb"
+};
+
+/* ---------- 稀有度 → 数值 tier（0 最基础，5 最稀有） ---------- */
+const RARITY_TIER = { "普通":0, "罕见":1, "史诗":2, "传说":3, "神级":4, "特别":5 };
+const TIER_NAME   = ["普通", "罕见", "史诗", "传说", "神级", "特别"];
+/** 稀有度名 → tier 数值；未知稀有度一律按「普通」处理 */
+function tierOf(rarity){ return RARITY_TIER[rarity] === undefined ? 0 : RARITY_TIER[rarity]; }
+/** tier 数值 → 稀有度名 */
+function tierName(t){ return TIER_NAME[Math.max(0, Math.min(5, t))]; }
+
+/* ---------- 非核心件（配方材料 / 中间成品）的稀有度兜底 ---------- */
+/* 只出现在 RECIPES 里的名字没有 it.r，用这张表补；不在表里的一律按「罕见」 */
+const MID_RARITY = {
+  /* 普通 */
+  "石头":"普通","木头":"普通","木剑":"普通","铁锭":"普通","钉子":"普通","皮革":"普通",
+  "兽皮":"普通","布":"普通","绳子":"普通","空锅":"普通","面包":"普通","牛奶":"普通",
+  "香蕉":"普通","蘑菇":"普通","胡萝卜":"普通","三叶草":"普通","尖牙":"普通","羽毛":"普通","骨头":"普通",
+  "书":"普通","瓶子":"普通","剪刀":"普通","铁钳":"普通","短弓":"普通","一坨煤炭":"普通","治疗草药":"普通",
+  /* 罕见 */
+  "草药":"罕见","毒蘑菇":"罕见","煤炭":"罕见","燃烧煤炭":"罕见","大蒜":"罕见","奶酪":"罕见","皮甲":"罕见","皮包":"罕见",
+  "尖刺项圈":"罕见","磨刀石":"罕见","幸运四叶草":"罕见","蝙蝠":"罕见","狼崽":"罕见","青蛙":"罕见",
+  "蜘蛛网":"罕见","蜘蛛":"罕见","松鼠":"罕见","獾爪":"罕见","虎牙":"罕见","象皮":"罕见","狼牙":"罕见",
+  "鹿角":"罕见","水银":"罕见","铜线":"罕见","彩虹球":"罕见","木雕面具":"罕见","斧头":"罕见","长矛":"罕见",
+  "巨剑":"罕见","碗":"罕见","鱼":"罕见","战斧":"罕见","勇敢狼崽":"罕见","全能狼崽":"罕见","睿智狼崽":"罕见",
+  "强化磨刀石":"罕见","猫咪":"罕见","猫头鹰":"罕见","獾":"罕见","皮制护甲":"罕见","匕首":"罕见","蓝莓":"罕见",
+  "龙鳞护甲":"史诗","龙爪":"史诗","龙铭珠":"史诗","凤凰":"史诗","彩虹终极圆圆浓稠黏黏":"神级",
+  /* 史诗 */
+  "魔法水晶":"史诗","宝石":"史诗","符文石":"史诗","火焰":"史诗","冰霜":"史诗","致幻蘑菇":"史诗",
+  "长弓":"史诗","颠茄":"史诗","海象尖牙":"史诗","红辣椒":"史诗","小丑牌":"史诗","瘟疫烧瓶":"史诗",
+  "恶魔烧瓶":"史诗","魔法魔药":"史诗","神圣魔药":"史诗","吸血魔药":"史诗","杯糕":"史诗","回旋镖":"史诗",
+  "荆棘剑":"史诗","水银元素":"史诗","魔法戒指":"史诗","塑料立方体":"史诗","齿轮":"史诗","线圈":"史诗",
+  "电阻":"史诗","电池":"史诗","橡子颈圈":"史诗","白色百合花":"史诗","腐败水晶":"史诗","紫水晶":"史诗",
+  "翡翠":"史诗","红宝石":"史诗","蓝宝石":"史诗","黄宝石":"史诗",
+  /* 传说 / 神级 / 特别 */
+  "钢之精华":"传说","光之圣典":"传说","魔法卷轴：冰霜箭":"传说","不愈法球":"传说","死神镰刀":"传说",
+  "黑色莲花":"传说","黑色国王":"传说","黑色皇后":"传说","黑色主教":"传说","黑色骑士":"传说",
+  "黑色城堡":"传说","黑色士兵":"传说","棋盘":"传说",
+  "幽灵":"神级","幽光":"神级"
+};
+
+/* ==================================================================
+   阶段（回合）划分 —— 商店推荐的粗略门槛
+   early:  1-3 回合 → 只推「普通 / 罕见」基础件
+   mid:    4-6 回合 → 追加「史诗」合成件
+   late:   7+ 回合  → 才推「传说 / 神级 / 特别」核心件
+   ================================================================== */
+const PHASES = [
+  { id:"early", name:"前期", turn:"1-3 回合", maxTier:1, desc:"先囤基础件与低阶材料，别急着买贵的" },
+  { id:"mid",   name:"中期", turn:"4-6 回合", maxTier:2, desc:"基础件已成型，开始凑史诗合成件" },
+  { id:"late",  name:"后期", turn:"7+ 回合",  maxTier:5, desc:"全力补传说 / 神级核心件，凑齐即成型" }
+];
+
+/* ==================================================================
+   1. 初始化：版本号 / 统计数据 / 渲染职业卡
+   ================================================================== */
+function initMeta(){
+  $("verTxt").textContent = GAME_META.version;
+  $("footVer").textContent = GAME_META.version;
+  $("statVersion").textContent = GAME_META.version;
+  $("statClasses").textContent = BUILDS.length;
+
+  let buildCount = 0, itemSet = new Set();
+  BUILDS.forEach(c => {
+    buildCount += c.builds.length;
+    c.builds.forEach(b => b.core.forEach(i => itemSet.add(i.n)));
+  });
+  $("statBuilds").textContent = buildCount;
+  $("statItems").textContent = itemSet.size + COMMON_POOL.length;
+}
+
+/** 渲染 7 张职业卡 */
+function renderClasses(){
+  elClassGrid.innerHTML = BUILDS.map(c => `
+    <button class="class-card reveal" data-id="${c.id}" style="--c:${c.color}"
+            aria-pressed="false">
+      <div class="cc-top">
+        <div class="cc-emoji">${c.emoji}</div>
+        <div>
+          <div class="cc-name">${c.name}</div>
+          <div class="cc-en">${c.en}</div>
+        </div>
+      </div>
+      <div class="cc-desc">${c.desc}</div>
+      <div class="cc-tags">
+        ${c.tags.map(t => `<span class="cc-tag">${t}</span>`).join("")}
+        <span class="cc-tag">${c.builds.length} 个流派</span>
+      </div>
+    </button>
+  `).join("");
+
+  elClassGrid.querySelectorAll(".class-card").forEach(card => {
+    card.addEventListener("click", () => selectClass(card.dataset.id));
+  });
+  observeReveal();
+}
+
+/** 选择职业 */
+function selectClass(id){
+  state.classId = id;
+  state.owned = [];
+  state.ownedNorm = new Set();
+
+  elClassGrid.querySelectorAll(".class-card").forEach(card => {
+    const on = card.dataset.id === id;
+    card.classList.toggle("on", on);
+    card.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+
+  const cls = getClass(id);
+  elPoolTitle.textContent = cls.name + " · 商店输入";
+  elPoolLabel.textContent = cls.name + " 相关装备（点击勾选）";
+  elScoreHint.textContent = cls.name + " · 已收录 " + cls.builds.length + " 个流派";
+
+  renderPicked();
+  renderPool();
+  renderBuilds();
+  renderCraft();
+  renderRecommend();
+}
+
+/** 取职业对象 */
+function getClass(id){ return BUILDS.find(c => c.id === id) || null; }
+
+/* ==================================================================
+   2. 装备池渲染（职业相关 + 通用）
+   ================================================================== */
+function renderPool(){
+  const cls = getClass(state.classId);
+  if (!cls) { elPool.innerHTML = ""; return; }
+
+  // 收集该职业所有核心件（去重），按「被几个流派引用」排序（复用越多越靠前）
+  const map = new Map();
+  cls.builds.forEach(b => b.core.forEach(it => {
+    const k = norm(it.n);
+    if (!map.has(k)) map.set(k, { n: it.n, r: it.r, count: 0 });
+    map.get(k).count++;
+  }));
+  const list = [...map.values()].sort((a, b) => b.count - a.count);
+
+  elPool.innerHTML =
+    list.map(it => poolItemHTML(it)).join("") +
+    COMMON_GROUPS.map(g =>
+      `<div class="pool-sec-title" style="grid-column:1/-1">通用 · ${g.title}（${g.items.length}）</div>` +
+      g.items.map(it => poolItemHTML(it)).join("")
+    ).join("");
+
+  // 绑定点击：切换持有状态
+  elPool.querySelectorAll(".pool-item").forEach(btn => {
+    btn.addEventListener("click", () => toggleItem(btn.dataset.n, btn));
+  });
+  syncPoolState();
+}
+
+/** 单个装备格 HTML */
+function poolItemHTML(it){
+  return `<button class="pool-item" data-n="${escapeAttr(it.n)}" data-k="${norm(it.n)}">
+    <span class="box">✓</span>
+    <span>
+      <span class="nm">${it.n}</span>
+      <span class="rt" style="color:${RARITY_COLOR[it.r] || "#666e88"}">${it.r || ""}</span>
+    </span>
+  </button>`;
+}
+
+/** 同步装备格的选中态 */
+function syncPoolState(){
+  elPool.querySelectorAll(".pool-item").forEach(btn => {
+    btn.classList.toggle("on", state.ownedNorm.has(btn.dataset.k));
+  });
+}
+
+/* ==================================================================
+   3. 增删装备 & 已选区渲染
+   ================================================================== */
+function toggleItem(name, btn){
+  const k = norm(name);
+  if (state.ownedNorm.has(k)) {
+    state.ownedNorm.delete(k);
+    state.owned = state.owned.filter(x => norm(x) !== k);
+  } else {
+    state.ownedNorm.add(k);
+    state.owned.push(name);
+  }
+  if (btn) btn.classList.toggle("on");
+  syncPoolState();
+  renderPicked();
+  renderBuilds();
+  renderRecommend();
+}
+
+/** 从自由文本批量添加（支持逗号 / 空格 / 顿号分隔） */
+function addFromText(raw){
+  const parts = String(raw || "").split(/[,，、;；\s]+/).map(s => s.trim()).filter(Boolean);
+  let added = 0;
+  parts.forEach(p => {
+    const k = norm(p);
+    if (!k || state.ownedNorm.has(k)) return;
+    state.ownedNorm.add(k);
+    state.owned.push(p);
+    added++;
+  });
+  if (added) { syncPoolState(); renderPicked(); renderBuilds(); renderRecommend(); }
+  return added;
+}
+
+/** 渲染「已选装备」chip 区；命中当前最高分流派核心件的标绿 */
+function renderPicked(){
+  if (!state.owned.length) {
+    elPicked.innerHTML = `<span class="empty">还没有选择任何装备 —— 先在下面点选，或直接输入名字。</span>`;
+    return;
+  }
+  // 计算当前最高分流派的核心件集合（同时把合成结果计入）
+  const craft = computeCraft();
+  const scored = scoreAll(craft);
+  const topHit = new Set();
+  if (scored.length && scored[0].score > 0) {
+    scored[0].build.core.forEach(i => {
+      const k = norm(i.n);
+      if (state.ownedNorm.has(k) || craft.effective.has(k)) topHit.add(k);
+    });
+  }
+
+  elPicked.innerHTML = state.owned.map(n => {
+    const k = norm(n);
+    const hit = topHit.has(k) ? " hit" : "";
+    return `<button class="chip${hit}" data-n="${escapeAttr(n)}" title="点击移除">
+      ${n}<span class="x">×</span></button>`;
+  }).join("") + ((craft.autoCraft.size + craft.manualN) ? `
+    <span class="chip-synth" title="下列装备由材料合成，评分中已按「已持有」计入">
+      ⚗️ 合成计入 ${craft.autoCraft.size + craft.manualN} 件
+    </span>` : "");
+
+  elPicked.querySelectorAll(".chip").forEach(chip => {
+    chip.addEventListener("click", () => {
+      const k = norm(chip.dataset.n);
+      state.ownedNorm.delete(k);
+      state.owned = state.owned.filter(x => norm(x) !== k);
+      syncPoolState(); renderPicked(); renderBuilds(); renderCraft();
+    });
+  });
+}
+
+/* ==================================================================
+   4. 评分算法（已把「合成可得」计入持有）
+   ------------------------------------------------------------------
+   · score（决定排序与「推荐」标）：命中核心件数 ÷ 全部核心件数
+     命中口径：直接持有 ∪ 材料齐全可合成（自动） ∪ 手动标记已合成
+   · routeProg（只用于进度条）：命中「升级路线」件数 ÷ 路线总件数
+     路线 = 核心件 + 递归展开的配方材料，三阶段全算进去，
+     所以前期只买了基础材料时，进度条也会动（不再恒为 0%）。
+   ================================================================== */
+function scoreAll(craft){
+  const cls = getClass(state.classId);
+  if (!cls) return [];
+  craft = craft || computeCraft();
+  const eff = craft.effective;
+
+  return cls.builds.map((b, idx) => {
+    const cores = b.core;
+    let hit = 0, synthHit = 0;
+    const haveList = [], missList = [], synthList = [];
+    cores.forEach(it => {
+      const k = norm(it.n);
+      const ownedDirect = state.ownedNorm.has(k);
+      if (ownedDirect || eff.has(k)) {
+        hit++;
+        haveList.push(it);
+        if (!ownedDirect) { synthHit++; synthList.push(it); }
+      } else {
+        missList.push(it);
+      }
+    });
+    const score = cores.length ? hit / cores.length : 0;
+
+    // 升级路线进度（含阶段一/二的基础件与材料）
+    const route = buildRoute(b).flat();
+    let rHit = 0;
+    route.forEach(x => { if (eff.has(norm(x.n))) rHit++; });
+    const routeProg = route.length ? rHit / route.length : 0;
+
+    return {
+      build: b, idx, score, hit, total: cores.length, synthHit,
+      haveList, missList, synthList,
+      route, routeHit: rHit, routeTotal: route.length, routeProg
+    };
+  })
+  /* 排序规则（决定流派卡的 DOM 显示顺序，每次输入变化都会重算）：
+     ① 核心件命中 score 降序 —— 命中件数 ÷ 核心件总数，最高分排最前（拿「推荐」标）
+     ② 同分看路线进度 routeProg 降序 —— 谁离成型更近谁靠前
+     ③ 仍相同则按职业内原始顺序 idx 升序 —— 保证稳定、可复现，不会每次刷新乱跳 */
+  .sort((a, b) =>
+    (b.score - a.score) ||
+    (b.routeProg - a.routeProg) ||
+    (a.idx - b.idx));
+}
+
+/* ==================================================================
+   5. 渲染推荐结果
+   ================================================================== */
+function renderBuilds(){
+  const cls = getClass(state.classId);
+  if (!cls) {
+    elEmpty.style.display = "block";
+    elResultHead.style.display = "none";
+    elBuildList.innerHTML = "";
+    return;
+  }
+  elEmpty.style.display = "none";
+  elResultHead.style.display = "flex";
+
+  const craft = computeCraft();
+  const scored = scoreAll(craft);
+  const best = scored[0];
+  elTopName.textContent = best ? best.build.name : "—";
+  elMatchCount.textContent = `已命中 ${best ? best.hit : 0} 件核心件`;
+  elScoreHint.textContent = state.owned.length
+    ? `已投入 ${state.owned.length} 件装备`
+    : "勾选装备后自动排序";
+
+  // 排序依据小字：让「卡片按命中重排」这件事在页面上是可见、可解释的
+  if (elSortHint){
+    elSortHint.textContent = `排序：核心件命中 ↓ · 同分看路线进度`;
+    elSortHint.title = `本职业 ${scored.length} 个流派已按核心件命中（hit÷total）从高到低排列；`
+      + `分数相同时按路线进度（含基础件）降序，再相同则保持职业内原始顺序。`
+      + `每次勾选 / 文本输入 / 切换回合阶段 / 点推荐行「标记已持有」都会立即重排。`;
+  }
+
+  elBuildList.innerHTML = scored.map((s, idx) => buildCardHTML(s, idx, craft)).join("");
+
+  // 进度条动画：下一帧再设宽度，触发 transition
+  requestAnimationFrame(() => {
+    elBuildList.querySelectorAll(".b-bar i").forEach(bar => {
+      bar.style.width = bar.dataset.w + "%";
+    });
+  });
+}
+
+/** 阶段中文名 */
+function phaseName(i){ return (PHASES[i] || PHASES[0]).name; }
+
+/** 材料进度：已齐 n / 共 need（用于推荐行与升级路线） */
+function matProgressHTML(name){
+  const ri = recipeOf(name);
+  if (!ri || !ri.length) return "";
+  const craft = computeCraft();
+  const got = ri.filter(m => craft.effective.has(norm(m.n))).length;
+  const full = got === ri.length;
+  return `<span class="rec-prog ${full ? "ok" : ""}">材料 ${got}/${ri.length}${full ? " ✅" : ""}</span>`;
+}
+
+/** 点击一行推荐 → 记为已持有（再点一次撤销） */
+function toggleOwned(name){
+  const k = norm(name);
+  if (state.ownedNorm.has(k)){
+    state.owned = state.owned.filter(x => norm(x) !== k);
+    state.ownedNorm.delete(k);
+  } else {
+    state.owned.push(name);
+    state.ownedNorm.add(k);
+  }
+  syncPoolState();
+  renderPicked();
+  renderBuilds();
+  renderCraft();
+  renderRecommend();
+}
+
+/** 升级路线里「已持有 / 可合成 / 还缺」的小徽章 */
+function chainBadge(n, craft){
+  const k = norm(n);
+  if (state.ownedNorm.has(k)) return `<span class="c-b can">✓ 已持有</span>`;
+  if (craft.effective.has(k)) return `<span class="c-b syn">⚗️合成</span>`;
+  const ri = craft.info.get(k);
+  if (ri && ri.craftable) return `<span class="c-b can">⚗️可合成</span>`;
+  return `<span class="c-b miss">还缺</span>`;
+}
+
+/** 流派卡里的「升级路线」折叠区 */
+function chainHTML(build, craft){
+  const bucket = buildRoute(build);
+  const names = ["阶段一 · 前期基础件", "阶段二 · 中期合成件", "阶段三 · 后期核心件"];
+  const notes = ["普通 / 罕见，商店看到就买", "史诗级，前期材料凑齐后合成", "传说及以上成品，成型标志"];
+  const hl = highlightStage(build);
+  const totalN = bucket.reduce((a, arr) => a + arr.length, 0);
+  if (!totalN) return "";
+  const stages = bucket.map((arr, i) => {
+    if (!arr.length) return "";
+    return `<div class="chain-stage ${i === hl ? "cur" : ""}">
+      <div class="c-head"><span class="c-t">${names[i]}</span>
+        <span class="c-note">${notes[i]} · ${arr.length} 件</span></div>
+      <div class="c-items">
+        ${arr.map(x => `<span class="c-itm" style="border-color:${RARITY_COLOR[x.rarity] || "#666e88"}55">
+          <b style="color:${RARITY_COLOR[x.rarity] || "#9ba3bb"}">${x.n}</b>
+          <span class="c-r">${x.rarity}</span>
+          ${chainBadge(x.n, craft)}
+        </span>`).join("")}
+      </div>
+    </div>`;
+  }).join("");
+  return `<details class="chain">
+    <summary>🗺️ 升级路线 · 按阶段展开（共 ${totalN} 件）</summary>
+    <div class="chain-body">${stages}</div>
+  </details>`;
+}
+
+/** 商店推荐面板：按当前回合阶段过滤 + 从最初级装备排起 */
+function renderRecommend(){
+  const box = elRecoList, sum = elRecoSum;
+  if (!box) return;
+  const hint = elRecoHint;
+  const craft = computeCraft();
+  const rec = recommendFor(craft, 12);
+  const phase = rec.phase;
+  const cls = getClass(state.classId);
+
+  // 阶段按钮高亮
+  document.querySelectorAll("[data-phase]").forEach(btn => {
+    btn.classList.toggle("on", Number(btn.dataset.phase) === state.phase);
+  });
+
+  if (!cls) return;                                     // 未选职业时不渲染
+
+  if (hint) hint.textContent = `${phase.name} ${phase.turn} · 只推基础度 ≤ ${tierName(phase.maxTier)}`;
+  if (elPhaseNote) elPhaseNote.textContent = phase.desc;
+  if (sum){
+    sum.innerHTML = `
+      <span class="s">当前阶段 <b>${phase.name} ${phase.turn}</b></span>
+      <span class="s">本阶段可买 <b>${rec.total}</b> 件</span>
+      <span class="s">已持有 <b>${rec.owned.length}</b> 件</span>
+      <span class="s">被阶段挡住 <b>${rec.blocked}</b> 件</span>`;
+  }
+
+  if (!rec.list.length){
+    box.innerHTML = `<div class="reco-empty">
+      ${phase.id === "late"
+        ? "本职业相关的装备都已经持有 / 可合成了 ✅"
+        : "当前阶段没有更基础的装备可推了 —— 试试切到「中期 / 后期」，或直接补下面的低阶材料。"}</div>`;
+    return;
+  }
+
+  box.innerHTML = rec.list.map((x, i) => {
+    const col = RARITY_COLOR[x.rarity] || "#9ba3bb";
+    const owned = state.ownedNorm.has(norm(x.n));
+    const tags = [];
+    tags.push(`<span class="rec-rar" style="color:${col};border-color:${col}66">${x.rarity}</span>`);
+    if (!x.isCore) tags.push(`<span class="rec-tag">材料</span>`);
+    if (x.craftable) tags.push(`<span class="rec-tag can">⚗️可合成</span>`);
+    const prog = x.materials
+      ? `<span class="rec-prog">材料 ${x.materials.filter(m => m.got).length}/${x.materials.length}${x.materials.every(m => m.got) ? " ✅" : ""}</span>`
+      : matProgressHTML(x.n);
+    const refs = x.isCore ? `<span class="rec-refs">用于 ${Math.max(1, x.refs)} 个流派</span>` : "";
+    return `<div class="rec-row ${owned ? "owned" : ""}">
+      <span class="rec-idx">${i + 1}</span>
+      <span class="rec-name" style="color:${col}">${x.n}</span>
+      ${tags.join("")}
+      ${prog}${refs}
+      <button class="rec-btn" data-own="${escapeAttr(x.n)}">${owned ? "已持有 · 撤销" : "我已买到"}</button>
+    </div>`;
+  }).join("") + (rec.total > rec.list.length
+    ? `<div class="reco-more">……还有 ${rec.total - rec.list.length} 件本阶段装备未列出（越靠前越基础，建议从上往下买）</div>`
+    : "");
+}
+
+/** 单张流派卡 */
+function buildCardHTML(s, idx, craft){
+  const b = s.build;
+  craft = craft || computeCraft();
+  const pct = Math.round(s.score * 100);
+  // 进度条口径 = 全路线（核心件 + 阶段一/二的基础件与材料），与上面的评分百分比不同
+  const rPct = Math.round((s.routeProg || 0) * 100);
+  const isTop = idx === 0 && s.score > 0;
+  const kindTag = b.kind === "sub"
+    ? `<span class="b-kind sub">子职业分支</span>`
+    : `<span class="b-kind">流派</span>`;
+
+  // 核心件徽章（可合成 / 已合成 会额外打标）
+  const itemsHTML = b.core.map(it => {
+    const k = norm(it.n);
+    const ri = craft.info.get(k);
+    const have = state.ownedNorm.has(k);
+    const synth = !have && craft.effective.has(k);       // 由合成而来
+    const canDo = ri && ri.craftable && !have && !craft.effective.has(k);
+    const cls = have ? "have" : (synth ? "have synth" : "miss");
+    const badge = synth ? `<span class="cbadge">⚗️合成</span>`
+      : (canDo ? `<span class="cbadge can">⚗️可合成</span>` : "");
+    return `<span class="itm ${cls}" title="${escapeAttr(it.e || "")}">
+      ${it.n}<span class="r">${it.r || ""}</span>${badge}</span>`;
+  }).join("");
+
+  // 还缺什么（购物清单）——可合成的单独成组，显示材料进度
+  const canCraft = s.missList.map(it => ({ it, ri: craft.info.get(norm(it.n)) }))
+    .filter(x => x.ri && x.ri.craftable);
+  const reallyMiss = s.missList.filter(it => {
+    const ri = craft.info.get(norm(it.n));
+    return !(ri && ri.craftable);
+  });
+  // 级联排序：先列「缺失材料的合成件」的低阶材料，再列成品；同层按稀有度升序（从最初级装备开始）
+  const missChain = [];
+  reallyMiss.forEach(it => {
+    const ri = craft.info.get(norm(it.n));
+    if (!ri || !ri.recipe) return;
+    const low = ri.recipe.map(m => norm(m.n)).filter(k => !craft.effective.has(k));
+    if (!low.length) return;
+    missChain.push(it);
+  });
+  const restMiss = reallyMiss.filter(it => missChain.indexOf(it) < 0);
+  const sortedMiss = missChain.concat(restMiss).sort((a, b) =>
+    itemTier(a.n, a) - itemTier(b.n, b) || String(a.n).localeCompare(String(b.n), "zh"));
+  const craftRows = canCraft.map(({ it, ri }) => `
+    <span class="itm can" title="材料齐全，合成即可获得">
+      ⚗️ ${it.n}
+      <span class="r">可合成：${ri.recipe.map(m => m.n + (m.c > 1 ? "×" + m.c : "")).join(" + ")}</span>
+    </span>`).join("");
+
+  const missHTML = (reallyMiss.length || canCraft.length)
+    ? `<div class="b-miss">
+         <div class="mh">商店看到这些优先买 · 从最初级装备排起（还缺 ${reallyMiss.length} 件${canCraft.length ? `，另有 ${canCraft.length} 件可直接合成` : ""}）</div>
+         <div class="b-items">
+           ${sortedMiss.slice(0, 7).map(it => {
+             const ri = craft.info.get(norm(it.n));
+             const col = RARITY_COLOR[it.r] || "#9ba3bb";
+             const prog = ri ? `<span class="r">材料 ${ri.ok}/${ri.need}</span>`
+                             : `<span class="r" style="color:${col}">${it.r || ""} 直接购买件</span>`;
+             return `<span class="itm miss" style="border-color:${col}44" title="${escapeAttr(it.e || "")}">${it.n}${prog}</span>`;
+           }).join("")}
+           ${craftRows}
+         </div>
+       </div>`
+    : `<div class="b-miss">
+         <div class="mh" style="color:var(--ok)">✓ 核心件已齐（含可合成件），接下来补触发速度与增益件</div>
+       </div>`;
+
+  // 已有装备在该流派中的作用（区分「直接持有」与「已能合成」）
+  const whyHTML = s.haveList.length ? `
+    <div class="b-why">
+      ${s.haveList.map(it => {
+        const k = norm(it.n);
+        const direct = state.ownedNorm.has(k);
+        return `<div class="why-row">
+          <span class="w-n">${it.n}</span>
+          <span class="w-e">${it.e || "该流派核心件之一"}</span>
+          <span class="w-src ${direct ? "" : "syn"}">${direct ? "已持有" : "⚗️合成"}</span>
+        </div>`;
+      }).join("")}
+    </div>` : "";
+
+  // 合成路线（文字提示）
+  const synthHTML = (b.synth && b.synth.length)
+    ? `<div class="b-syn"><b>合成路线：</b>${b.synth.join(" · ")}</div>` : "";
+
+  return `<article class="build ${isTop ? "reco" : ""}" data-rank="${idx + 1}" data-score="${pct}" data-route="${rPct}">
+    ${isTop ? `<span class="badge-reco">推荐</span>` : ""}
+    <div class="b-top">
+      <div>
+        <div class="b-name"><span class="b-rank" title="当前排序名次（核心件命中降序）">#${idx + 1}</span>${b.name}${kindTag}</div>
+        <div class="b-one">${b.desc}</div>
+      </div>
+      <div class="b-pct">${rPct}%<small title="路线进度（含基础件）：升级路线里已持有/可合成/已标记的件数 ÷ 路线总件数">路线进度（含基础件）${s.routeHit}/${s.routeTotal} 件</small><small class="b-score">核心件命中 ${pct}%（${s.hit}/${s.total}${s.synthHit ? " · 含合成 " + s.synthHit : ""}）</small></div>
+    </div>
+    <div class="b-bar ${rPct < 34 ? "low" : ""}"><i data-w="${rPct}"></i></div>
+    <div class="b-items">${itemsHTML}</div>
+    ${chainHTML(b, craft)}
+    ${missHTML}
+    ${whyHTML}
+    ${synthHTML}
+    <div class="b-syn"><b>打法逻辑：</b>${b.synergy}</div>
+  </article>`;
+}
+
+/** 转义，防止物品名里的引号破坏属性 */
+function escapeAttr(s){
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/* ==================================================================
+   5b. 合成面板：列出当前职业所有核心件的配方与材料进度
+   ------------------------------------------------------------------
+   · 每个核心件一行：配方材料 + 进度（2/2 或 1/2）+ 材料芯片（绿=够 / 红=缺）
+   · 材料齐全的排最前，并提供「标记为已合成」（计入评分）
+   · 无配方的核心件统一列在最后的「直接购买件」区
+   ================================================================== */
+function renderCraft(){
+  const cls = getClass(state.classId);
+  if (!cls){ elCraftList.innerHTML = ""; elCraftSum.innerHTML = ""; return; }
+  const craft = computeCraft();
+  const crafted = craftedSet();
+  elCraftTitle.textContent = "合成面板 · " + cls.name;
+
+  // 该职业全部核心件（去重，记录被几条流派引用）
+  const map = new Map();
+  cls.builds.forEach(b => b.core.forEach(it => {
+    const k = norm(it.n);
+    if (!map.has(k)) map.set(k, { it, n: 0 });
+    map.get(k).n++;
+  }));
+
+  const withRecipe = [], noRecipe = [];
+  map.forEach((v, k) => {
+    const ri = craft.info.get(k);
+    if (!ri){ noRecipe.push(v.it); return; }
+    withRecipe.push({ it: v.it, ri, k, refs: v.n });
+  });
+
+  // 排序：已合成 → 材料齐可合成 → 材料进度高 → 引用流派多
+  const rank = x => x.ri.crafted ? 0 : (x.ri.craftable ? 1 : 2);
+  withRecipe.sort((a, b) =>
+    rank(a) - rank(b) ||
+    (b.ri.ok / b.ri.need) - (a.ri.ok / a.ri.need) ||
+    b.refs - a.refs
+  );
+
+  const readyCnt = withRecipe.filter(x => x.ri.craftable && !x.ri.crafted).length;
+  const doneCnt = withRecipe.filter(x => x.ri.crafted).length;
+  const covered = withRecipe.filter(x => x.ri.have || x.ri.craftable || x.ri.crafted).length;
+  elCraftSum.innerHTML = `
+    <span class="s">核心件 <b>${map.size}</b> 件</span>
+    <span class="s">有配方 <b>${withRecipe.length}</b> 件（直接购买件 ${noRecipe.length}）</span>
+    <span class="s">可合成 <b>${readyCnt}</b> 件</span>
+    <span class="s">已合成 <b>${doneCnt}</b> 件</span>
+    <span class="s">评分已计入 <b>${covered}</b> 件</span>`;
+
+  const rows = withRecipe.map(({ it, ri, k }) => {
+    const cls2 = ri.crafted ? "done" : (ri.craftable ? "ready" : "");
+    const prog = `${ri.ok}/${ri.need}`;
+    const mats = ri.parts.map(p => `
+      <span class="mat ${p.enough ? "ok" : "no"}" title="${p.enough ? "已具备（含可合成）" : "还缺"}">
+        ${p.enough ? "✓" : "✕"} ${p.n}${p.c > 1 ? `<span class="mc">×${p.c}</span>` : ""}
+      </span>`).join("");
+    const btn = ri.crafted
+      ? `<button class="btn-mini" data-undo="${escapeAttr(it.n)}">已合成 · 点击撤销</button>`
+      : `<button class="btn-mini" data-do="${escapeAttr(it.n)}" ${ri.craftable ? "" : "disabled style=opacity:.45;cursor:not-allowed"}>
+           ${ri.craftable ? "⚗️ 标记为已合成" : "材料未齐"}
+         </button>`;
+    return `<div class="craft-row ${cls2}">
+      <div class="cr-top">
+        <span class="cr-name">${it.n}<span class="rt">${it.r || ""}${ri.have ? " · 已直接持有" : ""}${ri.crafted ? " · 已合成" : ""}</span></span>
+        <span class="cr-prog">材料 ${prog} 种齐 ${ri.craftable ? "✅" : ""} · ${ri.refs} 个流派需要</span>
+      </div>
+      <div class="cr-mats">${mats}</div>
+      <div class="cr-act">${btn}</div>
+    </div>`;
+  }).join("");
+
+  const noRows = noRecipe.length ? `
+    <div class="craft-row">
+      <div class="cr-top"><span class="cr-name">直接购买件（商店直购，无合成配方）</span></div>
+      <div class="cr-mats">${noRecipe.map(it =>
+        `<span class="mat">${it.n}${it.r ? `<span class="mc">· ${it.r}</span>` : ""}</span>`).join("")}</div>
+    </div>` : "";
+
+  elCraftList.innerHTML = rows + noRows ||
+    `<div class="craft-empty">该职业暂时没有可合成的核心件。</div>`;
+
+  // 标记 / 撤销 合成
+  elCraftList.querySelectorAll("[data-do]").forEach(btn => {
+    btn.addEventListener("click", () => setCrafted(btn.dataset.do, true));
+  });
+  elCraftList.querySelectorAll("[data-undo]").forEach(btn => {
+    btn.addEventListener("click", () => setCrafted(btn.dataset.undo, false));
+  });
+}
+
+/** 标记 / 撤销某个核心件为「已合成」，并刷新全部视图 */
+function setCrafted(name, on){
+  const k = norm(name);
+  const s = craftedSet();
+  if (on) s.add(k); else s.delete(k);
+  syncPoolState();
+  renderCraft();
+  renderPicked();
+  renderBuilds();
+  renderRecommend();
+}
+
+/**
+ * 按当前回合阶段刷新「商店推荐 + 升级路线高亮」。
+ * 其他交互（勾选装备 / 切换职业 / 标记合成）改完状态后调它即可保持一致。
+ */
+function renderPhase(){
+  renderBuilds();
+  renderRecommend();
+}
+
+/* ==================================================================
+   6. 事件绑定
+   ================================================================== */
+function bindUI(){
+  // 自由输入：回车或点「添加」
+  $("btnAdd").addEventListener("click", () => {
+    if (!state.classId) { elFreeInput.placeholder = "请先选择一个职业"; return; }
+    const n = addFromText(elFreeInput.value);
+    if (n) elFreeInput.value = "";
+  });
+  elFreeInput.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); $("btnAdd").click(); }
+  });
+
+  // 清空
+  $("btnClear").addEventListener("click", () => {
+    state.owned = []; state.ownedNorm = new Set();
+    syncPoolState(); renderPicked(); renderBuilds(); renderCraft(); renderRecommend();
+  });
+
+  // 全选核心件（一键模拟「完美成型」，方便看最强形态）
+  $("btnAll").addEventListener("click", () => {
+    const cls = getClass(state.classId);
+    if (!cls) return;
+    cls.builds.forEach(b => b.core.forEach(it => {
+      const k = norm(it.n);
+      if (!state.ownedNorm.has(k)) { state.ownedNorm.add(k); state.owned.push(it.n); }
+    }));
+    syncPoolState(); renderPicked(); renderBuilds(); renderCraft(); renderRecommend();
+  });
+
+  // 合成面板：一键标记所有材料齐全的核心件为「已合成」
+  $("btnCraftReady").addEventListener("click", () => {
+    const cls = getClass(state.classId);
+    if (!cls) return;
+    const craft = computeCraft();
+    const s = craftedSet();
+    craft.autoCraft.forEach(k => s.add(k));
+    syncPoolState(); renderCraft(); renderPicked(); renderBuilds(); renderRecommend();
+  });
+
+  // 合成面板：清空本职业的合成标记（不影响手动勾选）
+  $("btnCraftReset").addEventListener("click", () => {
+    if (state.classId) craftedByClass[state.classId] = new Set();
+    syncPoolState(); renderCraft(); renderPicked(); renderBuilds(); renderRecommend();
+  });
+
+  // 当前回合阶段切换：推荐清单与升级路线高亮同步刷新
+  document.querySelectorAll("[data-phase]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      state.phase = Number(btn.dataset.phase) || 0;
+      document.querySelectorAll("[data-phase]").forEach(b => b.classList.toggle("on", b === btn));
+      renderPhase();
+    });
+  });
+
+  // 商店推荐行：点一下记为「我已买到」，再点撤销
+  if (elRecoList){
+    elRecoList.addEventListener("click", e => {
+      const btn = e.target.closest ? e.target.closest("[data-own]") : null;
+      if (btn) toggleOwned(btn.dataset.own);
+    });
+  }
+
+  // 汉堡菜单
+  const burger = $("burger"), links = $("navLinks");
+  burger.addEventListener("click", () => {
+    const open = links.classList.toggle("show");
+    burger.classList.toggle("on", open);
+    burger.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  // 点击导航链接后关闭移动端菜单
+  links.querySelectorAll("a").forEach(a => a.addEventListener("click", () => {
+    links.classList.remove("show"); burger.classList.remove("on");
+    burger.setAttribute("aria-expanded", "false");
+  }));
+}
+
+/* ==================================================================
+   7. 滚动渐入（IntersectionObserver）
+   ================================================================== */
+let io = null;
+function observeReveal(){
+  const els = document.querySelectorAll(".reveal:not(.in)");
+  if (!("IntersectionObserver" in window)) {
+    els.forEach(el => el.classList.add("in")); return;
+  }
+  if (!io){
+    io = new IntersectionObserver(entries => {
+      entries.forEach(en => {
+        if (en.isIntersecting){ en.target.classList.add("in"); io.unobserve(en.target); }
+      });
+    }, { threshold: .12, rootMargin: "0px 0px -40px 0px" });
+  }
+  els.forEach((el, i) => { el.style.transitionDelay = Math.min(i * 40, 240) + "ms"; io.observe(el); });
+}
+
+/* ==================================================================
+   8. 启动
+   ================================================================== */
+(function boot(){
+  initMeta();
+  renderClasses();
+  bindUI();
+  observeReveal();
+  // 默认选中第一个职业（游侠），玩家可立刻上手
+  selectClass(BUILDS[0].id);
+  // 更新哈希链接平滑滚动由 CSS scroll-behavior 处理
+})();
+</script>
+</body>
+</html>
